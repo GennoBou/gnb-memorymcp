@@ -1,0 +1,46 @@
+# Databases & Temp DB files
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+*-wal
+*-shm
+data/*.db
+data/*.db-journal
+data/*.db-shm
+data/*.db-wal
+
+# Local docs & private notes
+/docs/local/
+
+# Go build & binaries
+*.exe
+*.test
+*.prof
+/dist/
+/bin/
+/main
+/gnb-memorymcp
+/bootstrap
+/bootstrap.exe
+
+# Serena MCP
+/.serena/
+
+# Environment and Config Files
+.env
+.env.json
+.env.local
+deploy.config.json
+
+# Node & Dependencies
+node_modules/
+
+# AWS SAM & Temp
+.aws-sam/
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+

@@ -1,0 +1,42 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: GNB MemoryMCP AWS Lambda Deployment Template
+
+Parameters:
+  DbUrl:
+    Type: String
+    Description: Turso (libSQL) connection URL (e.g. libsql://your-database.turso.io)
+  DbToken:
+    Type: String
+    Description: Turso authentication token
+    NoEcho: true
+    Default: ""
+  ApiKey:
+    Type: String
+    Description: MCP Server Bearer API Key
+    NoEcho: true
+
+Resources:
+  MemoryMcpFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: gnb-memorymcp
+      CodeUri: ./bin/lambda.zip
+      Handler: bootstrap
+      Runtime: provided.al2023
+      Architectures:
+        - x86_64
+      MemorySize: 256
+      Timeout: 30
+      Environment:
+        Variables:
+          DB_URL: !Ref DbUrl
+          DB_TOKEN: !Ref DbToken
+          API_KEY: !Ref ApiKey
+      FunctionUrlConfig:
+        AuthType: NONE
+
+Outputs:
+  FunctionUrl:
+    Description: Function URL for GNB MemoryMCP
+    Value: !GetAtt MemoryMcpFunctionUrl.FunctionUrl

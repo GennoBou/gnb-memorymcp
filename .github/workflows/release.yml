@@ -1,0 +1,139 @@
+name: Release and Deploy
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build, Release & Deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          check-latest: true
+
+      - name: Extract Tag & Version
+        id: vars
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          VERSION=${TAG#v}
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Run Tests
+        run: go test ./...
+
+      - name: Build Windows Binary
+        env:
+          CGO_ENABLED: 0
+          GOOS: windows
+          GOARCH: amd64
+        run: |
+          go build -ldflags="-s -w" -o gnb-memorymcp.exe ./cmd/gnb-memorymcp
+          ZIP_NAME="gnb-memorymcp-${{ steps.vars.outputs.tag }}-windows-amd64.zip"
+          zip "${ZIP_NAME}" gnb-memorymcp.exe README.md
+          HASH=$(sha256sum "${ZIP_NAME}" | awk '{print $1}')
+          echo "win_zip=${ZIP_NAME}" >> "$GITHUB_OUTPUT"
+          echo "win_hash=${HASH}" >> "$GITHUB_OUTPUT"
+        id: build_windows
+
+      - name: Build Lambda Binary
+        env:
+          CGO_ENABLED: 0
+          GOOS: linux
+          GOARCH: amd64
+        run: |
+          go build -ldflags="-s -w" -o bootstrap ./cmd/lambda
+          zip lambda.zip bootstrap
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ steps.build_windows.outputs.win_zip }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Deploy to AWS Lambda
+        if: ${{ env.AWS_ACCESS_KEY_ID != '' && env.AWS_SECRET_ACCESS_KEY != '' }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION || 'ap-northeast-3' }}
+          LAMBDA_FUNCTION_NAME: ${{ secrets.LAMBDA_FUNCTION_NAME || 'gnb-memorymcp' }}
+        run: |
+          echo "Deploying lambda.zip to AWS Lambda function: ${LAMBDA_FUNCTION_NAME} in ${AWS_REGION}..."
+          aws lambda update-function-code \
+            --function-name "${LAMBDA_FUNCTION_NAME}" \
+            --zip-file fileb://lambda.zip \
+            --region "${AWS_REGION}"
+
+      - name: Update Scoop Bucket
+        if: ${{ env.BUCKET_PAT != '' }}
+        env:
+          BUCKET_PAT: ${{ secrets.BUCKET_PAT }}
+          REPO_OWNER: ${{ github.repository_owner }}
+          REPO_NAME: ${{ github.event.repository.name }}
+          VERSION: ${{ steps.vars.outputs.version }}
+          TAG: ${{ steps.vars.outputs.tag }}
+          WIN_ZIP: ${{ steps.build_windows.outputs.win_zip }}
+          WIN_HASH: ${{ steps.build_windows.outputs.win_hash }}
+        run: |
+          echo "Updating Scoop bucket manifest..."
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Clone scoop-bucket repository
+          git clone https://x-access-token:${BUCKET_PAT}@github.com/${REPO_OWNER}/scoop-bucket.git scoop-bucket-repo
+          cd scoop-bucket-repo
+          mkdir -p bucket
+
+          DOWNLOAD_URL="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${TAG}/${WIN_ZIP}"
+          AUTOUPDATE_URL="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/v\$version/gnb-memorymcp-v\$version-windows-amd64.zip"
+
+          MANIFEST_PATH="bucket/gnb-memorymcp.json"
+
+          # Write or update manifest
+          cat <<EOF > "${MANIFEST_PATH}"
+          {
+            "version": "${VERSION}",
+            "description": "Multi-agent shared memory layer (MCP Server) implemented in Go",
+            "homepage": "https://github.com/${REPO_OWNER}/${REPO_NAME}",
+            "license": "ISC",
+            "architecture": {
+              "64bit": {
+                "url": "${DOWNLOAD_URL}",
+                "hash": "${WIN_HASH}"
+              }
+            },
+            "bin": "gnb-memorymcp.exe",
+            "checkver": "github",
+            "autoupdate": {
+              "architecture": {
+                "64bit": {
+                  "url": "${AUTOUPDATE_URL}"
+                }
+              }
+            }
+          }
+          EOF
+
+          git add "${MANIFEST_PATH}"
+          if git diff --staged --quiet; then
+            echo "No changes to scoop bucket manifest."
+          else
+            git commit -m "Update gnb-memorymcp to ${TAG}"
+            git push origin main
+            echo "Successfully updated scoop-bucket manifest for gnb-memorymcp ${TAG}"
+          fi

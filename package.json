@@ -1,0 +1,18 @@
+{
+  "name": "gnb-memorymcp",
+  "version": "1.0.0",
+  "description": "Multi-agent shared memory layer (MCP Server) implemented in Go",
+  "scripts": {
+    "build": "go build -o bin/gnb-memorymcp.exe ./cmd/gnb-memorymcp/main.go",
+    "build-lambda": "powershell -File ./build-lambda.ps1",
+    "deploy-lambda": "powershell -File ./deploy-lambda.ps1",
+    "build-and-deploy-lambda": "npm run build-lambda && npm run deploy-lambda",
+    "test": "go test ./...",
+    "fmt": "go fmt ./...",
+    "tidy": "go mod tidy",
+    "server": "go run cmd/gnb-memorymcp/main.go server",
+    "stdio": "go run cmd/gnb-memorymcp/main.go stdio"
+  },
+  "author": "",
+  "license": "ISC"
+}
