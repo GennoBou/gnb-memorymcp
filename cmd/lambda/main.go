@@ -244,7 +244,10 @@ func handleAuthEndpoints(path string, queryParams map[string]string, bodyBytes [
 		if redirectURI == "" {
 			return errorResponse(http.StatusBadRequest, "missing redirect_uri"), true, nil
 		}
-		targetURL := auth.BuildAuthorizeRedirectURL(redirectURI, state)
+		targetURL, err := auth.BuildAuthorizeRedirectURL(redirectURI, state)
+		if err != nil {
+			return errorResponse(http.StatusInternalServerError, "failed to generate authorize redirect url"), true, nil
+		}
 		return buildResponse(http.StatusFound, "", map[string]string{
 			"Location":                    targetURL,
 			"Access-Control-Allow-Origin": "*",

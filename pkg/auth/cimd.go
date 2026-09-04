@@ -20,10 +20,12 @@ var globalCodeStore = &CodeStore{
 	codes: make(map[string]time.Time),
 }
 
-func generateRandomHex(n int) string {
+func generateRandomHex(n int) (string, error) {
 	b := make([]byte, n)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("failed to generate secure random bytes: %w", err)
+	}
+	return hex.EncodeToString(b), nil
 }
 
 // GetCIMDOAuthMetadata は MCP サーバー自身の URL を基に CIMD 対応の OAuth メタデータを生成します
@@ -87,9 +89,18 @@ func IssueDCRRegistrationResponse(reqBytes []byte) ([]byte, error) {
 		clientName = "Google"
 	}
 
+	clientIDHex, err := generateRandomHex(16)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate client id: %w", err)
+	}
+	clientSecretHex, err := generateRandomHex(24)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate client secret: %w", err)
+	}
+
 	resp := DCRResponse{
-		ClientID:                "gnb_dcr_client_" + generateRandomHex(16),
-		ClientSecret:            "gnb_dcr_secret_" + generateRandomHex(24),
+		ClientID:                "gnb_dcr_client_" + clientIDHex,
+		ClientSecret:            "gnb_dcr_secret_" + clientSecretHex,
 		ClientName:              clientName,
 		RedirectURIs:            redirectURIs,
 		GrantTypes:              grantTypes,
@@ -105,8 +116,12 @@ func GetCIMDOAuthMetadataJSON(mcpBaseURL string) ([]byte, error) {
 }
 
 // BuildAuthorizeRedirectURL は /authorize リクエストから認可コードを生成してリダイレクト先 URL を組み立てます
-func BuildAuthorizeRedirectURL(redirectURI, state string) string {
-	code := "gnb_code_" + generateRandomHex(16)
+func BuildAuthorizeRedirectURL(redirectURI, state string) (string, error) {
+	codeHex, err := generateRandomHex(16)
+	if err != nil {
+		return "", fmt.Errorf("failed to generate authorization code: %w", err)
+	}
+	code := "gnb_code_" + codeHex
 	globalCodeStore.mu.Lock()
 	globalCodeStore.codes[code] = time.Now().Add(10 * time.Minute)
 	globalCodeStore.mu.Unlock()
@@ -115,7 +130,7 @@ func BuildAuthorizeRedirectURL(redirectURI, state string) string {
 	if strings.Contains(redirectURI, "?") {
 		sep = "&"
 	}
-	return fmt.Sprintf("%s%scode=%s&state=%s", redirectURI, sep, code, state)
+	return fmt.Sprintf("%s%scode=%s&state=%s", redirectURI, sep, code, state), nil
 }
 
 // ValidateAndIssueToken は認可コードをチェックして Access Token を発行します
@@ -127,11 +142,19 @@ type TokenResponse struct {
 }
 
 func IssueCIMDToken() ([]byte, error) {
+	accessTokenHex, err := generateRandomHex(24)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate access token: %w", err)
+	}
+	refreshTokenHex, err := generateRandomHex(24)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate refresh token: %w", err)
+	}
 	tokenResp := TokenResponse{
-		AccessToken:  "gnb_mcp_access_token_" + generateRandomHex(24),
+		AccessToken:  "gnb_mcp_access_token_" + accessTokenHex,
 		TokenType:    "Bearer",
 		ExpiresIn:    3600 * 24 * 365, // 1 年間有効
-		RefreshToken: "gnb_mcp_refresh_token_" + generateRandomHex(24),
+		RefreshToken: "gnb_mcp_refresh_token_" + refreshTokenHex,
 	}
 	return json.Marshal(tokenResp)
 }
