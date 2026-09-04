@@ -48,125 +48,127 @@ type ToolsListResult struct {
 	Tools []Tool `json:"tools"`
 }
 
-func (h *Handler) listTools() ToolsListResult {
-	return ToolsListResult{
-		Tools: []Tool{
-			{
-				Name:        "memory_create",
-				Description: "新規記憶を保存します。ユーザーに関する事実や設定、プロジェクトの文脈、長期保存すべき重要な会話を記録するために使用します。",
-				InputSchema: InputSchema{
-					Type: "object",
-					Properties: map[string]Property{
-						"content":     {Type: "string", Description: "記憶したい事実、設定、または知識の本文。"},
-						"source_tool": {Type: "string", Description: "呼び出し元のツール名（例: chatgpt, claude, gemini, antigravity など）。"},
-						"tags":        {Type: "array", Items: &Items{Type: "string"}, Description: "記憶に関連するプロジェクトや技術のタグ（例: [\"go\", \"aws\"]）。"},
-						"importance":  {Type: "integer", Description: "記憶の重要度（0〜10の範囲で、数値が大きいほど重要）。デフォルトは0。"},
-						"metadata":    {Type: "object", Description: "URLや会話IDなどの追加のメタデータ。"},
-					},
-					Required: []string{"content", "source_tool"},
-				},
+var defaultTools = []Tool{
+	{
+		Name:        "memory_create",
+		Description: "新規記憶を保存します。ユーザーに関する事実や設定、プロジェクトの文脈、長期保存すべき重要な会話を記録するために使用します。",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]Property{
+				"content":     {Type: "string", Description: "記憶したい事実、設定、または知識の本文。"},
+				"source_tool": {Type: "string", Description: "呼び出し元のツール名（例: chatgpt, claude, gemini, antigravity など）。"},
+				"tags":        {Type: "array", Items: &Items{Type: "string"}, Description: "記憶に関連するプロジェクトや技術のタグ（例: [\"go\", \"aws\"]）。"},
+				"importance":  {Type: "integer", Description: "記憶の重要度（0〜10の範囲で、数値が大きいほど重要）。デフォルトは0。"},
+				"metadata":    {Type: "object", Description: "URLや会話IDなどの追加のメタデータ。"},
 			},
-			{
-				Name:        "memory_search",
-				Description: "保存された記憶から、クエリにマッチするものを検索します。関連する文脈やユーザーの設定などを想起する際に使用します。",
-				InputSchema: InputSchema{
-					Type: "object",
-					Properties: map[string]Property{
-						"query": {Type: "string", Description: "検索キーワード。FTS5による高速全文検索が行われます。"},
-						"top_k": {Type: "integer", Description: "取得する最大件数。デフォルトは5。"},
-					},
-					Required: []string{"query"},
-				},
+			Required: []string{"content", "source_tool"},
+		},
+	},
+	{
+		Name:        "memory_search",
+		Description: "保存された記憶から、クエリにマッチするものを検索します。関連する文脈やユーザーの設定などを想起する際に使用します。",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]Property{
+				"query": {Type: "string", Description: "検索キーワード。FTS5による高速全文検索が行われます。"},
+				"top_k": {Type: "integer", Description: "取得する最大件数。デフォルトは5。"},
 			},
-			{
-				Name:        "memory_list",
-				Description: "保存されている記憶の一覧をフィルタリング・ソートして取得します。デバッグや履歴確認に使用します。",
-				InputSchema: InputSchema{
-					Type: "object",
-					Properties: map[string]Property{
-						"source_tool": {Type: "string", Description: "特定のツールで作成された記憶のみに絞り込みます。"},
-						"tag":         {Type: "string", Description: "特定のタグを含む記憶のみに絞り込みます。"},
-						"limit":       {Type: "integer", Description: "取得件数。デフォルトは20。"},
-						"offset":      {Type: "integer", Description: "取得開始位置（ページネーション用、デフォルトは0）。"},
-						"sort_by":     {Type: "string", Description: "ソートの基準（created_at, updated_at, importance）。デフォルトは created_at。"},
-						"order":       {Type: "string", Description: "ソート順（asc: 昇順, desc: 降順）。デフォルトは desc。"},
-					},
-				},
-			},
-			{
-				Name:        "memory_get",
-				Description: "指定されたID（ULID）を持つ記憶を1件取得します。",
-				InputSchema: InputSchema{
-					Type: "object",
-					Properties: map[string]Property{
-						"id": {Type: "string", Description: "取得対象の記憶のID（ULID）。"},
-					},
-					Required: []string{"id"},
-				},
-			},
-			{
-				Name:        "tags_list",
-				Description: "これまでに登録されたすべてのユニークなタグの一覧を取得します。表記ゆれの防止や、タグでの絞り込みの前に利用します。",
-				InputSchema: InputSchema{
-					Type: "object",
-					Properties: map[string]Property{},
-				},
-			},
-			{
-				Name:        "memory_update",
-				Description: "既存の記憶を更新します。情報の修正や、関連情報の追加時に使用します。",
-				InputSchema: InputSchema{
-					Type: "object",
-					Properties: map[string]Property{
-						"id":          {Type: "string", Description: "更新対象の記憶のID（ULID）。"},
-						"content":     {Type: "string", Description: "修正・更新後の本文。"},
-						"source_tool": {Type: "string", Description: "更新元のツール名。"},
-						"tags":        {Type: "array", Items: &Items{Type: "string"}, Description: "新しいタグの配列。"},
-						"importance":  {Type: "integer", Description: "更新後の重要度（0〜10）。"},
-						"metadata":    {Type: "object", Description: "更新後のメタデータ。"},
-					},
-					Required: []string{"id"},
-				},
-			},
-			{
-				Name:        "memory_delete",
-				Description: "不要になった記憶を明示的に削除します。",
-				InputSchema: InputSchema{
-					Type: "object",
-					Properties: map[string]Property{
-						"id": {Type: "string", Description: "削除対象の記憶のID（ULID）。"},
-					},
-					Required: []string{"id"},
-				},
-			},
-			{
-				Name:        "memory_status",
-				Description: "記憶データベースの全体ステータス（総件数、最終整理日時、整理が必要な候補数など）を取得します。",
-				InputSchema: InputSchema{
-					Type: "object",
-					Properties: map[string]Property{},
-				},
-			},
-			{
-				Name:        "memory_consolidate",
-				Description: "重複または矛盾している可能性のある記憶のペア/グループの一覧を取得します。返された情報を基に、LLM自身が内容を統合（memory_update）し、不要な古いIDを削除（memory_delete）してください。",
-				InputSchema: InputSchema{
-					Type: "object",
-					Properties: map[string]Property{
-						"limit":  {Type: "integer", Description: "取得するグループの最大件数。デフォルトは3。"},
-						"offset": {Type: "integer", Description: "取得開始位置（ページネーション用、デフォルトは0）。"},
-					},
-				},
-			},
-			{
-				Name:        "memory_cleanup_complete",
-				Description: "記憶の整理・統合（クレンジング）作業が完了したことをシステムに記録し、最終整理日時を更新します。",
-				InputSchema: InputSchema{
-					Type: "object",
-					Properties: map[string]Property{},
-				},
+			Required: []string{"query"},
+		},
+	},
+	{
+		Name:        "memory_list",
+		Description: "保存されている記憶の一覧をフィルタリング・ソートして取得します。デバッグや履歴確認に使用します。",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]Property{
+				"source_tool": {Type: "string", Description: "特定のツールで作成された記憶のみに絞り込みます。"},
+				"tag":         {Type: "string", Description: "特定のタグを含む記憶のみに絞り込みます。"},
+				"limit":       {Type: "integer", Description: "取得件数。デフォルトは20。"},
+				"offset":      {Type: "integer", Description: "取得開始位置（ページネーション用、デフォルトは0）。"},
+				"sort_by":     {Type: "string", Description: "ソートの基準（created_at, updated_at, importance）。デフォルトは created_at。"},
+				"order":       {Type: "string", Description: "ソート順（asc: 昇順, desc: 降順）。デフォルトは desc。"},
 			},
 		},
+	},
+	{
+		Name:        "memory_get",
+		Description: "指定されたID（ULID）を持つ記憶を1件取得します。",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]Property{
+				"id": {Type: "string", Description: "取得対象の記憶のID（ULID）。"},
+			},
+			Required: []string{"id"},
+		},
+	},
+	{
+		Name:        "tags_list",
+		Description: "これまでに登録されたすべてのユニークなタグの一覧を取得します。表記ゆれの防止や、タグでの絞り込みの前に利用します。",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]Property{},
+		},
+	},
+	{
+		Name:        "memory_update",
+		Description: "既存の記憶を更新します。情報の修正や、関連情報の追加時に使用します。",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]Property{
+				"id":          {Type: "string", Description: "更新対象の記憶のID（ULID）。"},
+				"content":     {Type: "string", Description: "修正・更新後の本文。"},
+				"source_tool": {Type: "string", Description: "更新元のツール名。"},
+				"tags":        {Type: "array", Items: &Items{Type: "string"}, Description: "新しいタグの配列。"},
+				"importance":  {Type: "integer", Description: "更新後の重要度（0〜10）。"},
+				"metadata":    {Type: "object", Description: "更新後のメタデータ。"},
+			},
+			Required: []string{"id"},
+		},
+	},
+	{
+		Name:        "memory_delete",
+		Description: "不要になった記憶を明示的に削除します。",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]Property{
+				"id": {Type: "string", Description: "削除対象の記憶のID（ULID）。"},
+			},
+			Required: []string{"id"},
+		},
+	},
+	{
+		Name:        "memory_status",
+		Description: "記憶データベースの全体ステータス（総件数、最終整理日時、整理が必要な候補数など）を取得します。",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]Property{},
+		},
+	},
+	{
+		Name:        "memory_consolidate",
+		Description: "重複または矛盾している可能性のある記憶のペア/グループの一覧を取得します。返された情報を基に、LLM自身が内容を統合（memory_update）し、不要な古いIDを削除（memory_delete）してください。",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]Property{
+				"limit":  {Type: "integer", Description: "取得するグループの最大件数。デフォルトは3。"},
+				"offset": {Type: "integer", Description: "取得開始位置（ページネーション用、デフォルトは0）。"},
+			},
+		},
+	},
+	{
+		Name:        "memory_cleanup_complete",
+		Description: "記憶の整理・統合（クレンジング）作業が完了したことをシステムに記録し、最終整理日時を更新します。",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]Property{},
+		},
+	},
+}
+
+func (h *Handler) listTools() ToolsListResult {
+	return ToolsListResult{
+		Tools: defaultTools,
 	}
 }
 
