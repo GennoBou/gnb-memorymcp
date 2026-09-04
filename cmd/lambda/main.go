@@ -79,20 +79,18 @@ func HandleRequest(ctx context.Context, req events.APIGatewayV2HTTPRequest) (eve
 	// 1. HTTP プリフライト / HEAD / DELETE リクエスト処理
 	switch method {
 	case "HEAD":
-		return buildResponse(http.StatusOK, "", map[string]string{
-			"Access-Control-Allow-Origin":  "*",
-			"Access-Control-Allow-Methods": "POST, GET, HEAD, OPTIONS",
-			"Access-Control-Allow-Headers": "*",
-			"Mcp-Protocol-Version":        defaultProtocolVersion,
-		}), nil
+		cors := getCORSHeaders(req.Headers)
+		cors["Access-Control-Allow-Methods"] = "POST, GET, HEAD, OPTIONS"
+		cors["Access-Control-Allow-Headers"] = "*"
+		cors["Mcp-Protocol-Version"] = defaultProtocolVersion
+		return buildResponse(http.StatusOK, "", cors), nil
 	case "OPTIONS":
-		return buildResponse(http.StatusOK, "", map[string]string{
-			"Access-Control-Allow-Origin":  "*",
-			"Access-Control-Allow-Methods": "POST, GET, HEAD, OPTIONS",
-			"Access-Control-Allow-Headers": "*",
-		}), nil
+		cors := getCORSHeaders(req.Headers)
+		cors["Access-Control-Allow-Methods"] = "POST, GET, HEAD, OPTIONS"
+		cors["Access-Control-Allow-Headers"] = "*"
+		return buildResponse(http.StatusOK, "", cors), nil
 	case "DELETE":
-		return jsonResponse(http.StatusOK, map[string]string{"status": "deleted"}, nil), nil
+		return jsonResponse(req.Headers, http.StatusOK, map[string]string{"status": "deleted"}, nil), nil
 	}
 
 	// 2. ディスカバリエンドポイント (.well-known/*) 処理
@@ -101,7 +99,7 @@ func HandleRequest(ctx context.Context, req events.APIGatewayV2HTTPRequest) (eve
 	}
 
 	// 3. OAuth 2.0 / CIMD 認可ハンドラー (/authorize, /token, /register)
-	if resp, handled, err := handleAuthEndpoints(path, req.QueryStringParameters, bodyBytes); handled {
+	if resp, handled, err := handleAuthEndpoints(path, req.QueryStringParameters, bodyBytes, req.Headers); handled {
 		return resp, err
 	}
 
@@ -124,6 +122,38 @@ func getHeaderValue(headers map[string]string, key string) string {
 		}
 	}
 	return ""
+}
+
+func getCORSHeaders(reqHeaders map[string]string) map[string]string {
+	res := map[string]string{}
+	origin := getHeaderValue(reqHeaders, "Origin")
+
+	allowedOriginsEnv := os.Getenv("ALLOWED_ORIGINS")
+	if allowedOriginsEnv == "" {
+		// If ALLOWED_ORIGINS is not explicitly configured, do not allow arbitrary origins.
+		return res
+	}
+
+	origins := strings.Split(allowedOriginsEnv, ",")
+	for _, o := range origins {
+		o = strings.TrimSpace(o)
+		if o == "*" {
+			if origin != "" {
+				res["Access-Control-Allow-Origin"] = origin
+				res["Vary"] = "Origin"
+			} else {
+				res["Access-Control-Allow-Origin"] = "*"
+			}
+			return res
+		}
+		if origin != "" && strings.EqualFold(o, origin) {
+			res["Access-Control-Allow-Origin"] = origin
+			res["Vary"] = "Origin"
+			return res
+		}
+	}
+
+	return res
 }
 
 func getBaseURL(headers map[string]string) string {
@@ -156,11 +186,13 @@ func buildResponse(statusCode int, body string, extraHeaders map[string]string) 
 	}
 }
 
-func jsonResponse(statusCode int, body interface{}, extraHeaders map[string]string) events.APIGatewayV2HTTPResponse {
+func jsonResponse(reqHeaders map[string]string, statusCode int, body interface{}, extraHeaders map[string]string) events.APIGatewayV2HTTPResponse {
 	headers := map[string]string{
 		"Content-Type":                 "application/json",
-		"Access-Control-Allow-Origin":  "*",
 		"Access-Control-Allow-Headers": "*",
+	}
+	for k, v := range getCORSHeaders(reqHeaders) {
+		headers[k] = v
 	}
 	for k, v := range extraHeaders {
 		headers[k] = v
@@ -184,11 +216,13 @@ func jsonResponse(statusCode int, body interface{}, extraHeaders map[string]stri
 	}
 }
 
-func errorResponse(statusCode int, message string) events.APIGatewayV2HTTPResponse {
+func errorResponse(reqHeaders map[string]string, statusCode int, message string) events.APIGatewayV2HTTPResponse {
 	headers := map[string]string{
 		"Content-Type":                 "text/plain",
-		"Access-Control-Allow-Origin":  "*",
 		"Access-Control-Allow-Headers": "*",
+	}
+	for k, v := range getCORSHeaders(reqHeaders) {
+		headers[k] = v
 	}
 
 	if statusCode == http.StatusUnauthorized {
@@ -208,7 +242,7 @@ func handleDiscoveryEndpoints(path string, headers map[string]string) (events.AP
 
 	switch path {
 	case "/.well-known/mcp", "/.well-known/mcp-configuration":
-		return jsonResponse(http.StatusOK, map[string]string{
+		return jsonResponse(headers, http.StatusOK, map[string]string{
 			"name":            "gnb-memorymcp",
 			"version":         "1.0.0",
 			"protocolVersion": defaultProtocolVersion,
@@ -217,9 +251,9 @@ func handleDiscoveryEndpoints(path string, headers map[string]string) (events.AP
 	case "/.well-known/oauth-authorization-server", "/.well-known/openid-configuration":
 		metaJSON, err := auth.GetCIMDOAuthMetadataJSON(baseURL)
 		if err != nil {
-			return errorResponse(http.StatusInternalServerError, "failed to generate oauth metadata"), true, nil
+			return errorResponse(headers, http.StatusInternalServerError, "failed to generate oauth metadata"), true, nil
 		}
-		return jsonResponse(http.StatusOK, metaJSON, nil), true, nil
+		return jsonResponse(headers, http.StatusOK, metaJSON, nil), true, nil
 
 	case "/.well-known/oauth-protected-resource":
 		meta := map[string]interface{}{
@@ -227,45 +261,44 @@ func handleDiscoveryEndpoints(path string, headers map[string]string) (events.AP
 			"authorization_servers": []string{baseURL},
 			"scopes_supported":      []string{"mcp", "openid"},
 		}
-		return jsonResponse(http.StatusOK, meta, nil), true, nil
+		return jsonResponse(headers, http.StatusOK, meta, nil), true, nil
 
 	case "/.well-known/jwks.json":
-		return jsonResponse(http.StatusOK, map[string]interface{}{"keys": []interface{}{}}, nil), true, nil
+		return jsonResponse(headers, http.StatusOK, map[string]interface{}{"keys": []interface{}{}}, nil), true, nil
 	}
 
 	return events.APIGatewayV2HTTPResponse{}, false, nil
 }
 
-func handleAuthEndpoints(path string, queryParams map[string]string, bodyBytes []byte) (events.APIGatewayV2HTTPResponse, bool, error) {
+func handleAuthEndpoints(path string, queryParams map[string]string, bodyBytes []byte, headers map[string]string) (events.APIGatewayV2HTTPResponse, bool, error) {
 	switch path {
 	case "/authorize":
 		redirectURI := queryParams["redirect_uri"]
 		state := queryParams["state"]
 		if redirectURI == "" {
-			return errorResponse(http.StatusBadRequest, "missing redirect_uri"), true, nil
+			return errorResponse(headers, http.StatusBadRequest, "missing redirect_uri"), true, nil
 		}
 		targetURL, err := auth.BuildAuthorizeRedirectURL(redirectURI, state)
 		if err != nil {
-			return errorResponse(http.StatusInternalServerError, "failed to generate authorize redirect url"), true, nil
+			return errorResponse(headers, http.StatusInternalServerError, "failed to generate authorize redirect url"), true, nil
 		}
-		return buildResponse(http.StatusFound, "", map[string]string{
-			"Location":                    targetURL,
-			"Access-Control-Allow-Origin": "*",
-		}), true, nil
+		cors := getCORSHeaders(headers)
+		cors["Location"] = targetURL
+		return buildResponse(http.StatusFound, "", cors), true, nil
 
 	case "/token":
 		tokenJSON, err := auth.IssueCIMDToken()
 		if err != nil {
-			return errorResponse(http.StatusInternalServerError, "failed to issue token"), true, nil
+			return errorResponse(headers, http.StatusInternalServerError, "failed to issue token"), true, nil
 		}
-		return jsonResponse(http.StatusOK, tokenJSON, nil), true, nil
+		return jsonResponse(headers, http.StatusOK, tokenJSON, nil), true, nil
 
 	case "/register":
 		dcrJSON, err := auth.IssueDCRRegistrationResponse(bodyBytes)
 		if err != nil {
-			return errorResponse(http.StatusInternalServerError, "failed to issue dcr client"), true, nil
+			return errorResponse(headers, http.StatusInternalServerError, "failed to issue dcr client"), true, nil
 		}
-		return jsonResponse(http.StatusCreated, dcrJSON, nil), true, nil
+		return jsonResponse(headers, http.StatusCreated, dcrJSON, nil), true, nil
 	}
 
 	return events.APIGatewayV2HTTPResponse{}, false, nil
@@ -276,16 +309,15 @@ func handleGETRequest(path string, headers map[string]string) events.APIGatewayV
 	baseURL := getBaseURL(headers)
 
 	if path == "/sse" || (strings.Contains(acceptHeader, "text/event-stream") && !strings.Contains(acceptHeader, "application/json")) {
-		return buildResponse(http.StatusOK, fmt.Sprintf("event: endpoint\ndata: %s/\n\n", baseURL), map[string]string{
-			"Content-Type":                 "text/event-stream",
-			"Cache-Control":                "no-cache",
-			"Connection":                   "keep-alive",
-			"Access-Control-Allow-Origin":  "*",
-			"Access-Control-Allow-Headers": "*",
-		})
+		cors := getCORSHeaders(headers)
+		cors["Content-Type"] = "text/event-stream"
+		cors["Cache-Control"] = "no-cache"
+		cors["Connection"] = "keep-alive"
+		cors["Access-Control-Allow-Headers"] = "*"
+		return buildResponse(http.StatusOK, fmt.Sprintf("event: endpoint\ndata: %s/\n\n", baseURL), cors)
 	}
 
-	return jsonResponse(http.StatusOK, map[string]interface{}{
+	return jsonResponse(headers, http.StatusOK, map[string]interface{}{
 		"name":            "GNB MemoryMCP",
 		"version":         "1.0.0",
 		"protocolVersion": "2025-11-25",
@@ -302,7 +334,7 @@ func handleMCPRequest(ctx context.Context, path string, headers map[string]strin
 	if err := json.Unmarshal(bodyBytes, &mcpReq); err != nil {
 		log.Printf("[DEBUG] json.Unmarshal error: %v\n", err)
 		resp := mcp.NewErrorResponse(nil, mcp.CodeParseError, "parse error")
-		return jsonResponse(http.StatusOK, resp, nil)
+		return jsonResponse(headers, http.StatusOK, resp, nil)
 	}
 
 	// initialize メソッドは未認証でも応答可能
@@ -314,7 +346,7 @@ func handleMCPRequest(ctx context.Context, path string, headers map[string]strin
 				protoVersion = pv
 			}
 		}
-		return jsonResponse(http.StatusOK, mcpResp, map[string]string{
+		return jsonResponse(headers, http.StatusOK, mcpResp, map[string]string{
 			"Mcp-Protocol-Version":          protoVersion,
 			"Mcp-Session-Id":                defaultSessionID,
 			"Access-Control-Expose-Headers": "Mcp-Protocol-Version, Mcp-Session-Id, WWW-Authenticate",
@@ -323,10 +355,9 @@ func handleMCPRequest(ctx context.Context, path string, headers map[string]strin
 
 	// notifications/initialized (204 No Content)
 	if mcpReq.Method == "notifications/initialized" {
-		return buildResponse(http.StatusNoContent, "", map[string]string{
-			"Access-Control-Allow-Origin": "*",
-			"Mcp-Session-Id":              defaultSessionID,
-		})
+		cors := getCORSHeaders(headers)
+		cors["Mcp-Session-Id"] = defaultSessionID
+		return buildResponse(http.StatusNoContent, "", cors)
 	}
 
 	// 認証チェック
@@ -336,7 +367,7 @@ func handleMCPRequest(ctx context.Context, path string, headers map[string]strin
 	token, err := auth.ExtractBearerToken(authHeader)
 	if err != nil {
 		log.Printf("[DEBUG] ExtractBearerToken error: %v", err)
-		return errorResponse(http.StatusUnauthorized, "Unauthorized: "+err.Error())
+		return errorResponse(headers, http.StatusUnauthorized, "Unauthorized: "+err.Error())
 	}
 
 	verifier := auth.NewMultiVerifier(
@@ -347,15 +378,16 @@ func handleMCPRequest(ctx context.Context, path string, headers map[string]strin
 	)
 	if err := verifier.VerifyToken(ctx, token); err != nil {
 		log.Printf("[DEBUG] VerifyToken error: %v", err)
-		return errorResponse(http.StatusUnauthorized, "Unauthorized: invalid token")
+		return errorResponse(headers, http.StatusUnauthorized, "Unauthorized: invalid token")
 	}
 
 	mcpResp := mcpHandler.Handle(ctx, &mcpReq)
 	if mcpResp == nil {
-		return buildResponse(http.StatusNoContent, "", nil)
+		cors := getCORSHeaders(headers)
+		return buildResponse(http.StatusNoContent, "", cors)
 	}
 
-	return jsonResponse(http.StatusOK, mcpResp, map[string]string{
+	return jsonResponse(headers, http.StatusOK, mcpResp, map[string]string{
 		"Mcp-Protocol-Version": defaultProtocolVersion,
 		"Mcp-Session-Id":       defaultSessionID,
 	})
