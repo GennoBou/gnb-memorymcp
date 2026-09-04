@@ -10,7 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/gennobou/gnb-memorymcp/pkg/domain"
-	"github.com/oklog/ulid/v2"
+	"github.com/google/uuid"
 )
 
 type Handler struct {
@@ -95,11 +95,11 @@ func (h *Handler) listTools() ToolsListResult {
 			},
 			{
 				Name:        "memory_get",
-				Description: "指定されたID（ULID）を持つ記憶を1件取得します。",
+				Description: "指定されたIDを持つ記憶を1件取得します。",
 				InputSchema: InputSchema{
 					Type: "object",
 					Properties: map[string]Property{
-						"id": {Type: "string", Description: "取得対象の記憶のID（ULID）。"},
+						"id": {Type: "string", Description: "取得対象の記憶のID。"},
 					},
 					Required: []string{"id"},
 				},
@@ -118,7 +118,7 @@ func (h *Handler) listTools() ToolsListResult {
 				InputSchema: InputSchema{
 					Type: "object",
 					Properties: map[string]Property{
-						"id":          {Type: "string", Description: "更新対象の記憶のID（ULID）。"},
+						"id":          {Type: "string", Description: "更新対象の記憶のID。"},
 						"content":     {Type: "string", Description: "修正・更新後の本文。"},
 						"source_tool": {Type: "string", Description: "更新元のツール名。"},
 						"tags":        {Type: "array", Items: &Items{Type: "string"}, Description: "新しいタグの配列。"},
@@ -134,7 +134,7 @@ func (h *Handler) listTools() ToolsListResult {
 				InputSchema: InputSchema{
 					Type: "object",
 					Properties: map[string]Property{
-						"id": {Type: "string", Description: "削除対象の記憶のID（ULID）。"},
+						"id": {Type: "string", Description: "削除対象の記憶のID。"},
 					},
 					Required: []string{"id"},
 				},
@@ -258,7 +258,7 @@ func (h *Handler) callTool(ctx context.Context, name string, argsJSON json.RawMe
 			return nil, fmt.Errorf("importance must be between 0 and 10 (got %d)", args.Importance)
 		}
 
-		id := ulid.Make().String()
+		id := uuid.NewString()
 
 		m := &domain.Memory{
 			ID:         id,
