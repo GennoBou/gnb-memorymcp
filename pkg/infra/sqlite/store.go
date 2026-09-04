@@ -21,6 +21,11 @@ import (
 //go:embed schema.sql
 var schemaSQL string
 
+const (
+	defaultSimilarityThreshold  = 0.35
+	lengthRatioPruningThreshold = 2.85
+)
+
 type Store struct {
 	db *sql.DB
 }
@@ -550,7 +555,7 @@ func (s *Store) GetCleanupCandidates(ctx context.Context, limit, offset int) ([]
 		return nil, nil
 	}
 
-	const similarityThreshold = 0.35
+	similarityThreshold := defaultSimilarityThreshold
 	groupedIDs := make(map[string]bool)
 	var allGroups []*domain.CleanupGroup
 
@@ -570,8 +575,8 @@ func (s *Store) GetCleanupCandidates(ctx context.Context, limit, offset int) ([]
 			}
 
 			len2 := utf8.RuneCountInString(m2.Content)
-			// 数学的に Jaccard 類似度が 0.35 以上になり得ない長さの比（約2.85倍以上）を早期スキップ
-			if float64(len1) > float64(len2)*2.85 || float64(len2) > float64(len1)*2.85 {
+			// 数学的に Jaccard 類似度が閾値以上になり得ない長さの比を早期スキップ
+			if float64(len1) > float64(len2)*lengthRatioPruningThreshold || float64(len2) > float64(len1)*lengthRatioPruningThreshold {
 				continue
 			}
 
