@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -75,36 +78,106 @@ func ExtractBearerToken(authHeader string) (string, error) {
 
 // Auth0UserInfoVerifier は Auth0 の /userinfo エンドポイントを使って Bearer トークンを検証します
 type Auth0UserInfoVerifier struct {
-	domain string
+	domain     string
+	httpClient *http.Client
+	baseURL    string
+}
+
+// Auth0Option は Auth0UserInfoVerifier の設定を変更するオプショナル関数です
+type Auth0Option func(*Auth0UserInfoVerifier)
+
+// WithAuth0HTTPClient はカスタム http.Client を設定します
+func WithAuth0HTTPClient(client *http.Client) Auth0Option {
+	return func(v *Auth0UserInfoVerifier) {
+		v.httpClient = client
+	}
+}
+
+// WithAuth0BaseURL はベース URL をオーバーライドします (テスト用)
+func WithAuth0BaseURL(baseURL string) Auth0Option {
+	return func(v *Auth0UserInfoVerifier) {
+		v.baseURL = baseURL
+	}
+}
+
+var validDomainRegex = regexp.MustCompile(`^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$`)
+
+// isSafeDomain checks if a domain string is a valid hostname and not an IP address or internal host.
+func isSafeDomain(domain string) bool {
+	domain = strings.TrimSpace(domain)
+	if domain == "" {
+		return false
+	}
+
+	// Reject if domain contains port, paths, query, fragment or userinfo characters
+	if strings.ContainsAny(domain, "/?#@:\\") {
+		return false
+	}
+
+	// Reject localhost or local domain names explicitly
+	lower := strings.ToLower(domain)
+	if lower == "localhost" || strings.HasSuffix(lower, ".localhost") || strings.HasSuffix(lower, ".local") || strings.HasSuffix(lower, ".internal") {
+		return false
+	}
+
+	// Reject IP addresses (both IPv4 and IPv6) to prevent targeting internal network IP addresses directly
+	if ip := net.ParseIP(domain); ip != nil {
+		return false
+	}
+
+	// Validate domain format against strict standard domain regex
+	if !validDomainRegex.MatchString(domain) {
+		return false
+	}
+
+	// Ensure domain can be parsed properly by net/url as part of HTTPS URL
+	parsedURL, err := url.Parse("https://" + domain)
+	if err != nil || parsedURL.Host != domain {
+		return false
+	}
+
+	return true
 }
 
 // NewAuth0UserInfoVerifier は Auth0 のドメインで Verifier を初期化します
-func NewAuth0UserInfoVerifier(domain string) *Auth0UserInfoVerifier {
+func NewAuth0UserInfoVerifier(domain string, opts ...Auth0Option) *Auth0UserInfoVerifier {
 	d := strings.TrimPrefix(domain, "https://")
 	d = strings.TrimPrefix(d, "http://")
 	d = strings.TrimSuffix(d, "/")
-	return &Auth0UserInfoVerifier{domain: d}
+	v := &Auth0UserInfoVerifier{domain: d}
+	for _, opt := range opts {
+		opt(v)
+	}
+	return v
 }
 
 // VerifyToken は Auth0 の /userinfo にアクセスして Bearer トークンの有効性を検証します
 func (v *Auth0UserInfoVerifier) VerifyToken(ctx context.Context, token string) error {
-	if token == "" || v.domain == "" {
+	if token == "" || (v.domain == "" && v.baseURL == "") {
 		return ErrUnauthorized
 	}
 
-	scheme := "https"
-	if strings.HasPrefix(v.domain, "127.0.0.1") || strings.HasPrefix(v.domain, "localhost") {
-		scheme = "http"
+	var reqURL string
+	if v.baseURL != "" {
+		// baseURL が設定されている場合は優先 (テスト環境など)
+		reqURL = fmt.Sprintf("%s/userinfo", strings.TrimSuffix(v.baseURL, "/"))
+	} else {
+		if !isSafeDomain(v.domain) {
+			return ErrUnauthorized
+		}
+		reqURL = fmt.Sprintf("https://%s/userinfo", v.domain)
 	}
 
-	url := fmt.Sprintf("%s://%s/userinfo", scheme, v.domain)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
 		return ErrUnauthorized
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := v.httpClient
+	if client == nil {
+		client = &http.Client{Timeout: 5 * time.Second}
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return ErrUnauthorized
@@ -129,8 +202,18 @@ func NewJWTBearerVerifier(domain ...string) *JWTBearerVerifier {
 	if len(domain) > 0 && strings.TrimSpace(domain[0]) != "" {
 		d = domain[0]
 	}
+
+	var verifier *Auth0UserInfoVerifier
+	if strings.HasPrefix(d, "http://") || strings.HasPrefix(d, "https://") {
+		verifier = NewAuth0UserInfoVerifier("", WithAuth0BaseURL(d))
+	} else if strings.HasPrefix(d, "127.0.0.1") || strings.HasPrefix(d, "localhost") {
+		verifier = NewAuth0UserInfoVerifier("", WithAuth0BaseURL("http://"+d))
+	} else {
+		verifier = NewAuth0UserInfoVerifier(d)
+	}
+
 	return &JWTBearerVerifier{
-		userInfoVerifier: NewAuth0UserInfoVerifier(d),
+		userInfoVerifier: verifier,
 	}
 }
 
