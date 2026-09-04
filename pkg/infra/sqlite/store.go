@@ -540,6 +540,13 @@ func (s *Store) SetSystemSetting(ctx context.Context, key, value string) error {
 	return nil
 }
 
+const (
+	defaultSimilarityThreshold = 0.35
+	// lengthRatioThreshold は Jaccard 類似度が similarityThreshold (0.35) 以上になり得ない長さの比（約2.85倍以上）を早期スキップするためのしきい値です。
+	lengthRatioThreshold = 2.85
+	defaultCleanupLimit  = 3
+)
+
 func (s *Store) GetCleanupCandidates(ctx context.Context, limit, offset int) ([]*domain.CleanupGroup, error) {
 	memories, err := s.List(ctx, domain.MemoryFilter{}, 1000)
 	if err != nil {
@@ -565,7 +572,6 @@ func (s *Store) GetCleanupCandidates(ctx context.Context, limit, offset int) ([]
 		}
 	}
 
-	const similarityThreshold = 0.35
 	groupedIDs := make(map[string]bool)
 	var allGroups []*domain.CleanupGroup
 
@@ -587,13 +593,13 @@ func (s *Store) GetCleanupCandidates(ctx context.Context, limit, offset int) ([]
 			}
 
 			len2 := meta2.runeLen
-			// 数学的に Jaccard 類似度が 0.35 以上になり得ない長さの比（約2.85倍以上）を早期スキップ
-			if float64(len1) > float64(len2)*2.85 || float64(len2) > float64(len1)*2.85 {
+			// 数学的に Jaccard 類似度が similarityThreshold 以上になり得ない長さの比を早期スキップ
+			if float64(len1) > float64(len2)*lengthRatioThreshold || float64(len2) > float64(len1)*lengthRatioThreshold {
 				continue
 			}
 
 			sim := jaccardSimilarityFromBiGrams(meta1.biGrams, meta2.biGrams)
-			if sim >= similarityThreshold {
+			if sim >= defaultSimilarityThreshold {
 				if len(currentGroup) == 0 {
 					currentGroup = append(currentGroup, m1)
 					groupedIDs[m1.ID] = true
@@ -614,7 +620,7 @@ func (s *Store) GetCleanupCandidates(ctx context.Context, limit, offset int) ([]
 
 	// ページネーションの適用
 	if limit <= 0 {
-		limit = 3 // デフォルトは3
+		limit = defaultCleanupLimit
 	}
 	if offset < 0 {
 		offset = 0
