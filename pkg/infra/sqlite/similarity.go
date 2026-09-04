@@ -34,11 +34,8 @@ func charBiGrams(s string) map[string]bool {
 	return grams
 }
 
-// jaccardSimilarity は2つの文字列の文字バイグラムによる Jaccard 係数類似度を計算します。
-func jaccardSimilarity(s1, s2 string) float64 {
-	g1 := charBiGrams(s1)
-	g2 := charBiGrams(s2)
-
+// jaccardSimilarityFromBiGrams は事前抽出された2つの文字バイグラムマップから Jaccard 係数類似度を計算します。
+func jaccardSimilarityFromBiGrams(g1, g2 map[string]bool) float64 {
 	if len(g1) == 0 || len(g2) == 0 {
 		return 0.0
 	}
@@ -52,4 +49,11 @@ func jaccardSimilarity(s1, s2 string) float64 {
 
 	union := len(g1) + len(g2) - intersection
 	return float64(intersection) / float64(union)
+}
+
+// jaccardSimilarity は2つの文字列の文字バイグラムによる Jaccard 係数類似度を計算します。
+func jaccardSimilarity(s1, s2 string) float64 {
+	g1 := charBiGrams(s1)
+	g2 := charBiGrams(s2)
+	return jaccardSimilarityFromBiGrams(g1, g2)
 }
