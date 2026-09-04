@@ -75,31 +75,64 @@ func ExtractBearerToken(authHeader string) (string, error) {
 
 // Auth0UserInfoVerifier は Auth0 の /userinfo エンドポイントを使って Bearer トークンを検証します
 type Auth0UserInfoVerifier struct {
-	domain string
+	domain     string
+	httpClient *http.Client
+	baseURL    string
+}
+
+// Auth0Option は Auth0UserInfoVerifier の設定を変更するオプショナル関数です
+type Auth0Option func(*Auth0UserInfoVerifier)
+
+// WithAuth0HTTPClient はカスタム http.Client を設定します
+func WithAuth0HTTPClient(client *http.Client) Auth0Option {
+	return func(v *Auth0UserInfoVerifier) {
+		v.httpClient = client
+	}
+}
+
+// WithAuth0BaseURL はベース URL をオーバーライドします (テスト用)
+func WithAuth0BaseURL(baseURL string) Auth0Option {
+	return func(v *Auth0UserInfoVerifier) {
+		v.baseURL = baseURL
+	}
 }
 
 // NewAuth0UserInfoVerifier は Auth0 のドメインで Verifier を初期化します
-func NewAuth0UserInfoVerifier(domain string) *Auth0UserInfoVerifier {
+func NewAuth0UserInfoVerifier(domain string, opts ...Auth0Option) *Auth0UserInfoVerifier {
 	d := strings.TrimPrefix(domain, "https://")
 	d = strings.TrimPrefix(d, "http://")
 	d = strings.TrimSuffix(d, "/")
-	return &Auth0UserInfoVerifier{domain: d}
+	v := &Auth0UserInfoVerifier{domain: d}
+	for _, opt := range opts {
+		opt(v)
+	}
+	return v
 }
 
 // VerifyToken は Auth0 の /userinfo にアクセスして Bearer トークンの有効性を検証します
 func (v *Auth0UserInfoVerifier) VerifyToken(ctx context.Context, token string) error {
-	if token == "" || v.domain == "" {
+	if token == "" || (v.domain == "" && v.baseURL == "") {
 		return ErrUnauthorized
 	}
 
-	url := fmt.Sprintf("https://%s/userinfo", v.domain)
+	var url string
+	if v.baseURL != "" {
+		url = fmt.Sprintf("%s/userinfo", strings.TrimSuffix(v.baseURL, "/"))
+	} else {
+		url = fmt.Sprintf("https://%s/userinfo", v.domain)
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return ErrUnauthorized
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := v.httpClient
+	if client == nil {
+		client = &http.Client{Timeout: 5 * time.Second}
+	}
+
 	resp, err := client.Do(req)
 	if err != nil {
 		return ErrUnauthorized

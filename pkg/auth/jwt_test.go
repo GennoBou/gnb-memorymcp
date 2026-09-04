@@ -2,6 +2,8 @@ package auth
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -62,4 +64,91 @@ func TestMultiVerifier(t *testing.T) {
 	if err := multi.VerifyToken(ctx, "invalid"); err == nil {
 		t.Errorf("expected invalid token to fail")
 	}
+}
+
+func TestAuth0UserInfoVerifier(t *testing.T) {
+	t.Run("Domain normalization", func(t *testing.T) {
+		tests := []struct {
+			input    string
+			expected string
+		}{
+			{"example.auth0.com", "example.auth0.com"},
+			{"https://example.auth0.com/", "example.auth0.com"},
+			{"http://example.auth0.com/", "example.auth0.com"},
+		}
+
+		for _, tt := range tests {
+			v := NewAuth0UserInfoVerifier(tt.input)
+			if v.domain != tt.expected {
+				t.Errorf("NewAuth0UserInfoVerifier(%q) domain = %q, want %q", tt.input, v.domain, tt.expected)
+			}
+		}
+	})
+
+	t.Run("Empty token or domain returns ErrUnauthorized", func(t *testing.T) {
+		ctx := context.Background()
+
+		vEmptyDomain := NewAuth0UserInfoVerifier("")
+		if err := vEmptyDomain.VerifyToken(ctx, "valid-token"); err != ErrUnauthorized {
+			t.Errorf("expected ErrUnauthorized for empty domain, got %v", err)
+		}
+
+		vValid := NewAuth0UserInfoVerifier("dev.auth0.com")
+		if err := vValid.VerifyToken(ctx, ""); err != ErrUnauthorized {
+			t.Errorf("expected ErrUnauthorized for empty token, got %v", err)
+		}
+	})
+
+	t.Run("VerifyToken with HTTP test server", func(t *testing.T) {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/userinfo" {
+				http.Error(w, "not found", http.StatusNotFound)
+				return
+			}
+			authHeader := r.Header.Get("Authorization")
+			if authHeader == "Bearer valid-token" {
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(`{"sub": "auth0|12345"}`))
+			} else {
+				w.WriteHeader(http.StatusUnauthorized)
+				w.Write([]byte(`{"error": "Unauthorized"}`))
+			}
+		}))
+		defer ts.Close()
+
+		verifier := NewAuth0UserInfoVerifier("unused-domain.com",
+			WithAuth0BaseURL(ts.URL),
+			WithAuth0HTTPClient(ts.Client()),
+		)
+
+		ctx := context.Background()
+
+		// Valid token
+		if err := verifier.VerifyToken(ctx, "valid-token"); err != nil {
+			t.Errorf("expected nil error for valid token, got %v", err)
+		}
+
+		// Invalid token
+		if err := verifier.VerifyToken(ctx, "invalid-token"); err != ErrUnauthorized {
+			t.Errorf("expected ErrUnauthorized for invalid token, got %v", err)
+		}
+	})
+
+	t.Run("VerifyToken handles server errors and network failure", func(t *testing.T) {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+
+		verifier := NewAuth0UserInfoVerifier("unused-domain.com",
+			WithAuth0BaseURL(ts.URL),
+			WithAuth0HTTPClient(ts.Client()),
+		)
+		ts.Close() // Close immediately so request fails with network error
+
+		ctx := context.Background()
+
+		if err := verifier.VerifyToken(ctx, "valid-token"); err != ErrUnauthorized {
+			t.Errorf("expected ErrUnauthorized on network failure, got %v", err)
+		}
+	})
 }
