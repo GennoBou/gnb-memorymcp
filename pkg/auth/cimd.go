@@ -20,6 +20,40 @@ var globalCodeStore = &CodeStore{
 	codes: make(map[string]time.Time),
 }
 
+// TokenStore は発行されたアクセストークンを保存するためのインメモリマップです
+type TokenStore struct {
+	mu     sync.Mutex
+	tokens map[string]time.Time
+}
+
+var globalTokenStore = &TokenStore{
+	tokens: make(map[string]time.Time),
+}
+
+// StoreCIMDToken はアクセストークンとその有効期限を保存します
+func StoreCIMDToken(token string, expiry time.Duration) {
+	globalTokenStore.mu.Lock()
+	defer globalTokenStore.mu.Unlock()
+
+	globalTokenStore.tokens[token] = time.Now().Add(expiry)
+}
+
+// ValidateCIMDToken は指定されたアクセストークンが有効（保存済みかつ未期限切れ）か検証します
+func ValidateCIMDToken(token string) bool {
+	globalTokenStore.mu.Lock()
+	defer globalTokenStore.mu.Unlock()
+
+	exp, ok := globalTokenStore.tokens[token]
+	if !ok {
+		return false
+	}
+	if time.Now().After(exp) {
+		delete(globalTokenStore.tokens, token)
+		return false
+	}
+	return true
+}
+
 func generateRandomHex(n int) (string, error) {
 	b := make([]byte, n)
 	if _, err := rand.Read(b); err != nil {
@@ -150,10 +184,15 @@ func IssueCIMDToken() ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate refresh token: %w", err)
 	}
+	accessToken := "gnb_mcp_access_token_" + accessTokenHex
+	expiresInSec := 3600 * 24 * 365 // 1 年間有効
+
+	StoreCIMDToken(accessToken, time.Duration(expiresInSec)*time.Second)
+
 	tokenResp := TokenResponse{
-		AccessToken:  "gnb_mcp_access_token_" + accessTokenHex,
+		AccessToken:  accessToken,
 		TokenType:    "Bearer",
-		ExpiresIn:    3600 * 24 * 365, // 1 年間有効
+		ExpiresIn:    expiresInSec,
 		RefreshToken: "gnb_mcp_refresh_token_" + refreshTokenHex,
 	}
 	return json.Marshal(tokenResp)

@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 func TestExtractBearerToken(t *testing.T) {
@@ -61,5 +62,31 @@ func TestMultiVerifier(t *testing.T) {
 
 	if err := multi.VerifyToken(ctx, "invalid"); err == nil {
 		t.Errorf("expected invalid token to fail")
+	}
+}
+
+func TestCIMDBearerVerifier(t *testing.T) {
+	ctx := context.Background()
+	verifier := NewCIMDBearerVerifier()
+
+	// 1. Valid token issued via IssueCIMDToken
+	validToken := "gnb_mcp_access_token_valid123456789"
+	StoreCIMDToken(validToken, 10*time.Minute)
+
+	if err := verifier.VerifyToken(ctx, validToken); err != nil {
+		t.Errorf("expected valid issued token to pass verification, got: %v", err)
+	}
+
+	// 2. Fake token with matching prefix but not issued
+	fakeToken := "gnb_mcp_access_token_fake_unauthorized"
+	if err := verifier.VerifyToken(ctx, fakeToken); err == nil {
+		t.Errorf("expected fake token with matching prefix to fail verification, got nil")
+	}
+
+	// 3. Expired token
+	expiredToken := "gnb_mcp_access_token_expired123"
+	StoreCIMDToken(expiredToken, -1*time.Minute)
+	if err := verifier.VerifyToken(ctx, expiredToken); err == nil {
+		t.Errorf("expected expired token to fail verification, got nil")
 	}
 }
