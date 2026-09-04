@@ -92,7 +92,12 @@ func (v *Auth0UserInfoVerifier) VerifyToken(ctx context.Context, token string) e
 		return ErrUnauthorized
 	}
 
-	url := fmt.Sprintf("https://%s/userinfo", v.domain)
+	scheme := "https"
+	if strings.HasPrefix(v.domain, "127.0.0.1") || strings.HasPrefix(v.domain, "localhost") {
+		scheme = "http"
+	}
+
+	url := fmt.Sprintf("%s://%s/userinfo", scheme, v.domain)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return ErrUnauthorized
@@ -114,10 +119,19 @@ func (v *Auth0UserInfoVerifier) VerifyToken(ctx context.Context, token string) e
 }
 
 // JWTBearerVerifier は JWT 形式 (ピリオド2つ以上含む ey...) の Bearer トークンを検証・許可します
-type JWTBearerVerifier struct{}
+type JWTBearerVerifier struct {
+	userInfoVerifier *Auth0UserInfoVerifier
+}
 
-func NewJWTBearerVerifier() *JWTBearerVerifier {
-	return &JWTBearerVerifier{}
+// NewJWTBearerVerifier は指定された Auth0 ドメインで JWTBearerVerifier を初期化します
+func NewJWTBearerVerifier(domain ...string) *JWTBearerVerifier {
+	d := "gennobou.jp.auth0.com"
+	if len(domain) > 0 && strings.TrimSpace(domain[0]) != "" {
+		d = domain[0]
+	}
+	return &JWTBearerVerifier{
+		userInfoVerifier: NewAuth0UserInfoVerifier(d),
+	}
 }
 
 func (v *JWTBearerVerifier) VerifyToken(ctx context.Context, token string) error {
@@ -126,10 +140,13 @@ func (v *JWTBearerVerifier) VerifyToken(ctx context.Context, token string) error
 		return ErrUnauthorized
 	}
 	// JWT トークン (header.payload.signature) の形式判定
-	if strings.HasPrefix(trimmed, "ey") && strings.Count(trimmed, ".") >= 2 {
-		return nil
+	if !(strings.HasPrefix(trimmed, "ey") && strings.Count(trimmed, ".") >= 2) {
+		return ErrUnauthorized
 	}
-	return ErrUnauthorized
+	if v.userInfoVerifier == nil {
+		return ErrUnauthorized
+	}
+	return v.userInfoVerifier.VerifyToken(ctx, trimmed)
 }
 
 // CIMDBearerVerifier は gnb_mcp_access_token_ プレフィックスのトークンを検証・許可します

@@ -2,6 +2,9 @@ package auth
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -88,5 +91,47 @@ func TestCIMDBearerVerifier(t *testing.T) {
 	StoreCIMDToken(expiredToken, -1*time.Minute)
 	if err := verifier.VerifyToken(ctx, expiredToken); err == nil {
 		t.Errorf("expected expired token to fail verification, got nil")
+	}
+}
+
+func TestJWTBearerVerifier(t *testing.T) {
+	ctx := context.Background()
+
+	// 1. Mock Auth0 userinfo HTTP server
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.valid.signature" {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"sub":"user123"}`))
+			return
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	// Extract domain/host from test server URL (e.g. "127.0.0.1:12345")
+	serverURL := strings.TrimPrefix(server.URL, "http://")
+
+	verifier := NewJWTBearerVerifier(serverURL)
+
+	tests := []struct {
+		name    string
+		token   string
+		wantErr bool
+	}{
+		{"Empty Token", "", true},
+		{"Non-JWT Format", "not-a-jwt-token", true},
+		{"Missing Signature Dots", "ey12345", true},
+		{"Forged/Invalid Signature JWT", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.fake.signature", true},
+		{"Valid Verified JWT", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.valid.signature", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := verifier.VerifyToken(ctx, tt.token)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("VerifyToken() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
 	}
 }
