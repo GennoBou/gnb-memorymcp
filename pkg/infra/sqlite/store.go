@@ -550,32 +550,49 @@ func (s *Store) GetCleanupCandidates(ctx context.Context, limit, offset int) ([]
 		return nil, nil
 	}
 
+	type memoryMeta struct {
+		memory  *domain.Memory
+		runeLen int
+		biGrams map[string]bool
+	}
+
+	metas := make([]memoryMeta, len(memories))
+	for i, m := range memories {
+		metas[i] = memoryMeta{
+			memory:  m,
+			runeLen: utf8.RuneCountInString(m.Content),
+			biGrams: charBiGrams(m.Content),
+		}
+	}
+
 	const similarityThreshold = 0.35
 	groupedIDs := make(map[string]bool)
 	var allGroups []*domain.CleanupGroup
 
-	for i := 0; i < len(memories); i++ {
-		m1 := memories[i]
+	for i := 0; i < len(metas); i++ {
+		meta1 := metas[i]
+		m1 := meta1.memory
 		if groupedIDs[m1.ID] {
 			continue
 		}
 
 		var currentGroup []*domain.Memory
-		len1 := utf8.RuneCountInString(m1.Content)
+		len1 := meta1.runeLen
 
-		for j := i + 1; j < len(memories); j++ {
-			m2 := memories[j]
+		for j := i + 1; j < len(metas); j++ {
+			meta2 := metas[j]
+			m2 := meta2.memory
 			if groupedIDs[m2.ID] {
 				continue
 			}
 
-			len2 := utf8.RuneCountInString(m2.Content)
+			len2 := meta2.runeLen
 			// 数学的に Jaccard 類似度が 0.35 以上になり得ない長さの比（約2.85倍以上）を早期スキップ
 			if float64(len1) > float64(len2)*2.85 || float64(len2) > float64(len1)*2.85 {
 				continue
 			}
 
-			sim := jaccardSimilarity(m1.Content, m2.Content)
+			sim := jaccardSimilarityFromBiGrams(meta1.biGrams, meta2.biGrams)
 			if sim >= similarityThreshold {
 				if len(currentGroup) == 0 {
 					currentGroup = append(currentGroup, m1)
