@@ -342,7 +342,7 @@ func handleMCPRequest(ctx context.Context, path string, headers map[string]strin
 	verifier := auth.NewMultiVerifier(
 		auth.NewApiKeyVerifier(apiKey),
 		auth.NewAuth0UserInfoVerifier(auth0Domain),
-		auth.NewJWTBearerVerifier(),
+		auth.NewJWTBearerVerifier(auth0Domain),
 		auth.NewCIMDBearerVerifier(),
 	)
 	if err := verifier.VerifyToken(ctx, token); err != nil {
