@@ -95,3 +95,94 @@ func TestHandleRequest_AuthenticationAndRouting(t *testing.T) {
 		t.Errorf("expected parse error, got: %v", mcpErrResp.Error)
 	}
 }
+
+func TestHandleRequest_CORS(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("OPTIONS request with Origin when ALLOWED_ORIGINS is unset", func(t *testing.T) {
+		t.Setenv("ALLOWED_ORIGINS", "")
+		req := events.APIGatewayV2HTTPRequest{
+			RequestContext: events.APIGatewayV2HTTPRequestContext{
+				HTTP: events.APIGatewayV2HTTPRequestContextHTTPDescription{
+					Method: "OPTIONS",
+					Path:   "/",
+				},
+			},
+			Headers: map[string]string{
+				"origin": "https://untrusted-app.com",
+			},
+		}
+
+		resp, err := HandleRequest(ctx, req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if acao, ok := resp.Headers["Access-Control-Allow-Origin"]; ok && acao != "" {
+			t.Errorf("expected no Access-Control-Allow-Origin when ALLOWED_ORIGINS is unset, got '%s'", acao)
+		}
+	})
+
+	t.Run("OPTIONS request without Origin header when ALLOWED_ORIGINS is unset", func(t *testing.T) {
+		t.Setenv("ALLOWED_ORIGINS", "")
+		req := events.APIGatewayV2HTTPRequest{
+			RequestContext: events.APIGatewayV2HTTPRequestContext{
+				HTTP: events.APIGatewayV2HTTPRequestContextHTTPDescription{
+					Method: "OPTIONS",
+					Path:   "/",
+				},
+			},
+		}
+
+		resp, err := HandleRequest(ctx, req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if acao, ok := resp.Headers["Access-Control-Allow-Origin"]; ok && acao != "" {
+			t.Errorf("expected no Access-Control-Allow-Origin header without Origin, got '%s'", acao)
+		}
+	})
+
+	t.Run("ALLOWED_ORIGINS whitelist matching", func(t *testing.T) {
+		t.Setenv("ALLOWED_ORIGINS", "https://allowed.com, https://another.com")
+
+		// Allowed origin
+		reqAllowed := events.APIGatewayV2HTTPRequest{
+			RequestContext: events.APIGatewayV2HTTPRequestContext{
+				HTTP: events.APIGatewayV2HTTPRequestContextHTTPDescription{
+					Method: "OPTIONS",
+					Path:   "/",
+				},
+			},
+			Headers: map[string]string{
+				"Origin": "https://allowed.com",
+			},
+		}
+		respAllowed, err := HandleRequest(ctx, reqAllowed)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if respAllowed.Headers["Access-Control-Allow-Origin"] != "https://allowed.com" {
+			t.Errorf("expected Access-Control-Allow-Origin 'https://allowed.com', got '%s'", respAllowed.Headers["Access-Control-Allow-Origin"])
+		}
+
+		// Disallowed origin
+		reqDisallowed := events.APIGatewayV2HTTPRequest{
+			RequestContext: events.APIGatewayV2HTTPRequestContext{
+				HTTP: events.APIGatewayV2HTTPRequestContextHTTPDescription{
+					Method: "OPTIONS",
+					Path:   "/",
+				},
+			},
+			Headers: map[string]string{
+				"Origin": "https://malicious.com",
+			},
+		}
+		respDisallowed, err := HandleRequest(ctx, reqDisallowed)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if acao, ok := respDisallowed.Headers["Access-Control-Allow-Origin"]; ok && acao != "" {
+			t.Errorf("expected no Access-Control-Allow-Origin for disallowed origin, got '%s'", acao)
+		}
+	})
+}
