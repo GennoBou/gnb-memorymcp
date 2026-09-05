@@ -77,6 +77,7 @@ npm run build-lambda
   "DB_URL": "libsql://gnb-memorymcp-username.turso.io",
   "DB_TOKEN": "your-turso-token",
   "API_KEY": "your-secure-api-key-here",
+  "ALLOWED_ORIGINS": "https://example.com,https://app.example.com",
   "LAMBDA_ROLE_ARN": ""
 }
 ```
@@ -149,6 +150,7 @@ CLI を使用せず、Web コンソールから設定・デプロイを行う場
    | `DB_URL` | `libsql://gnb-memorymcp-username.turso.io` | Turso の接続 URL |
    | `DB_TOKEN` | `eyJhbGciOiJ...` | Turso の認証用トークン |
    | `API_KEY` | `your-secure-api-key-here` | MCPサーバーの Bearer 認証用 API キー |
+   | `ALLOWED_ORIGINS` | `https://example.com,https://app.example.com` | （任意）CORS 許可オリジンのカンマ区切りリスト |
 
 3. **[保存]** をクリックします。
 

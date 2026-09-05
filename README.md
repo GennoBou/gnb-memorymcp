@@ -117,8 +117,8 @@ go build -o bin/gnb-memorymcp.exe ./cmd/gnb-memorymcp/main.go
   # ローカルホストからのみ接続可能として起動 (APIキーが未指定の場合は自動的に 'dev-key' が使われます)
   ./bin/gnb-memorymcp.exe server --port 8080 --db-url "file:data/local_v2.db"
 
-  # 外部ネットワークに公開して起動 (--host 0.0.0.0 指定時は、安全な独自の --api-key 設定が必須)
-  ./bin/gnb-memorymcp.exe server --host 0.0.0.0 --port 8080 --api-key "your-secure-secret-key" --db-url "file:data/local_v2.db"
+  # 外部ネットワークに公開して起動 (--host 0.0.0.0 指定時は、安全な独自の --api-key 設定が必須。必要に応じて CORS 許可オリジンを指定)
+  ./bin/gnb-memorymcp.exe server --host 0.0.0.0 --port 8080 --api-key "your-secure-secret-key" --allowed-origins "https://example.com" --db-url "file:data/local_v2.db"
   ```
 
 - **方法2: 環境変数で指定して起動**
@@ -127,6 +127,7 @@ go build -o bin/gnb-memorymcp.exe ./cmd/gnb-memorymcp/main.go
   $env:API_KEY="your-secret-key"
   $env:PORT="8080"
   $env:DB_URL="file:data/local_v2.db"
+  $env:ALLOWED_ORIGINS="https://example.com,http://localhost:3000"
   ./bin/gnb-memorymcp.exe server
   ```
 
