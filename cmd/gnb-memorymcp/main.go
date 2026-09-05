@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/gennobou/gnb-memorymcp/pkg/auth"
@@ -25,6 +26,7 @@ func main() {
 	hostFlag := fs.String("host", "", "HTTP サーバーモード用のバインドホスト名 (127.0.0.1 または 0.0.0.0 など)")
 	portFlag := fs.String("port", "", "HTTP サーバーモード用のポート番号")
 	apiKeyFlag := fs.String("api-key", "", "HTTP サーバーモード認証用の API キー")
+	allowedOriginsFlag := fs.String("allowed-origins", "", "CORS 許可オリジンのカンマ区切りリスト (例: https://example.com,http://localhost:3000)")
 
 	// 第1引数がサブコマンド（stdio / server）であるかチェック
 	mode := "stdio" // デフォルトは stdio（互換性確保のため）
@@ -103,7 +105,12 @@ func main() {
 			log.Printf("API_KEY が設定されていません。デフォルト値 'dev-key' を使用します (ローカルバインドのみ)")
 		}
 
-		runHTTPServer(ctx, mcpHandler, host, port, apiKey)
+		allowedOrigins := *allowedOriginsFlag
+		if allowedOrigins == "" {
+			allowedOrigins = os.Getenv("ALLOWED_ORIGINS")
+		}
+
+		runHTTPServer(ctx, mcpHandler, host, port, apiKey, allowedOrigins)
 	default:
 		log.Fatalf("未知のモードです: %s", mode)
 	}
@@ -132,25 +139,18 @@ func runStdio(ctx context.Context, mcpHandler *mcp.Handler) {
 }
 
 // runHTTPServer は HTTP サーバーモードで MCP リクエストを処理します
-func runHTTPServer(ctx context.Context, mcpHandler *mcp.Handler, host, port, apiKey string) {
+func runHTTPServer(ctx context.Context, mcpHandler *mcp.Handler, host, port, apiKey, allowedOriginsStr string) {
 	auth0Domain := os.Getenv("AUTH0_DOMAIN")
 	if auth0Domain == "" {
 		auth0Domain = "gennobou.jp.auth0.com"
 	}
 
+	allowedOrigins := parseAllowedOrigins(allowedOriginsStr)
+
 	mux := http.NewServeMux()
 
 	// OAuth 2.0 / OIDC Discovery ハンドラー
-	discoveryHandler := func(w http.ResponseWriter, r *http.Request) {
-		metaJSON, err := auth.GetOAuthMetadataJSON(auth0Domain)
-		if err != nil {
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		_, _ = w.Write(metaJSON)
-	}
+	discoveryHandler := makeDiscoveryHandler(auth0Domain, allowedOrigins)
 
 	mux.HandleFunc("/.well-known/oauth-authorization-server", discoveryHandler)
 	mux.HandleFunc("/.well-known/openid-configuration", discoveryHandler)
@@ -210,6 +210,44 @@ func runHTTPServer(ctx context.Context, mcpHandler *mcp.Handler, host, port, api
 	log.Printf("サーバーを %s で起動します...", addr)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("サーバーの起動に失敗しました: %v", err)
+	}
+}
+
+func parseAllowedOrigins(originsStr string) map[string]bool {
+	if originsStr == "" {
+		return nil
+	}
+	origins := make(map[string]bool)
+	for _, o := range strings.Split(originsStr, ",") {
+		trimmed := strings.TrimSpace(o)
+		if trimmed != "" {
+			origins[trimmed] = true
+		}
+	}
+	return origins
+}
+
+func setCORSHeaders(w http.ResponseWriter, r *http.Request, allowedOrigins map[string]bool) {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return
+	}
+	if allowedOrigins != nil && allowedOrigins[origin] {
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Vary", "Origin")
+	}
+}
+
+func makeDiscoveryHandler(auth0Domain string, allowedOrigins map[string]bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		metaJSON, err := auth.GetOAuthMetadataJSON(auth0Domain)
+		if err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		setCORSHeaders(w, r, allowedOrigins)
+		_, _ = w.Write(metaJSON)
 	}
 }
 
