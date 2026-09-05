@@ -141,7 +141,7 @@ func NewCIMDBearerVerifier() *CIMDBearerVerifier {
 
 func (v *CIMDBearerVerifier) VerifyToken(ctx context.Context, token string) error {
 	trimmed := strings.TrimSpace(token)
-	if strings.HasPrefix(trimmed, "gnb_mcp_access_token_") {
+	if ValidateCIMDToken(trimmed) {
 		return nil
 	}
 	return ErrUnauthorized

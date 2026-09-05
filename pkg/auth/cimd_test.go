@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -32,6 +33,15 @@ func TestCIMDOAuthMetadata(t *testing.T) {
 
 	if !strings.Contains(string(tokenBytes), "gnb_mcp_access_token_") {
 		t.Errorf("token response missing expected access_token prefix: %s", string(tokenBytes))
+	}
+
+	var resp TokenResponse
+	if err := json.Unmarshal(tokenBytes, &resp); err != nil {
+		t.Fatalf("failed to unmarshal token response: %v", err)
+	}
+
+	if !ValidateCIMDToken(resp.AccessToken) {
+		t.Errorf("issued token %s was not validated by ValidateCIMDToken", resp.AccessToken)
 	}
 }
 
