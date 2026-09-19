@@ -185,4 +185,48 @@ func TestHandleRequest_CORS(t *testing.T) {
 			t.Errorf("expected no Access-Control-Allow-Origin for disallowed origin, got '%s'", acao)
 		}
 	})
+
+	t.Run("ALLOWED_ORIGINS wildcard handling", func(t *testing.T) {
+		t.Setenv("ALLOWED_ORIGINS", "*")
+
+		// Request with Origin header
+		reqWithOrigin := events.APIGatewayV2HTTPRequest{
+			RequestContext: events.APIGatewayV2HTTPRequestContext{
+				HTTP: events.APIGatewayV2HTTPRequestContextHTTPDescription{
+					Method: "OPTIONS",
+					Path:   "/",
+				},
+			},
+			Headers: map[string]string{
+				"Origin": "https://any-domain.com",
+			},
+		}
+		respWithOrigin, err := HandleRequest(ctx, reqWithOrigin)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if respWithOrigin.Headers["Access-Control-Allow-Origin"] != "*" {
+			t.Errorf("expected Access-Control-Allow-Origin '*', got '%s'", respWithOrigin.Headers["Access-Control-Allow-Origin"])
+		}
+		if vary, ok := respWithOrigin.Headers["Vary"]; ok && vary == "Origin" {
+			t.Errorf("expected no 'Vary: Origin' when wildcard is used, got '%s'", vary)
+		}
+
+		// Request without Origin header
+		reqWithoutOrigin := events.APIGatewayV2HTTPRequest{
+			RequestContext: events.APIGatewayV2HTTPRequestContext{
+				HTTP: events.APIGatewayV2HTTPRequestContextHTTPDescription{
+					Method: "OPTIONS",
+					Path:   "/",
+				},
+			},
+		}
+		respWithoutOrigin, err := HandleRequest(ctx, reqWithoutOrigin)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if respWithoutOrigin.Headers["Access-Control-Allow-Origin"] != "*" {
+			t.Errorf("expected Access-Control-Allow-Origin '*', got '%s'", respWithoutOrigin.Headers["Access-Control-Allow-Origin"])
+		}
+	})
 }

@@ -138,12 +138,7 @@ func getCORSHeaders(reqHeaders map[string]string) map[string]string {
 	for _, o := range origins {
 		o = strings.TrimSpace(o)
 		if o == "*" {
-			if origin != "" {
-				res["Access-Control-Allow-Origin"] = origin
-				res["Vary"] = "Origin"
-			} else {
-				res["Access-Control-Allow-Origin"] = "*"
-			}
+			res["Access-Control-Allow-Origin"] = "*"
 			return res
 		}
 		if origin != "" && strings.EqualFold(o, origin) {
