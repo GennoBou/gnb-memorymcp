@@ -10,6 +10,7 @@ import (
 	"log"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -22,7 +23,10 @@ import (
 var schemaSQL string
 
 type Store struct {
-	db *sql.DB
+	db          *sql.DB
+	cacheMu     sync.RWMutex
+	cachedGroup []*domain.CleanupGroup
+	cacheValid  bool
 }
 
 // NewStore は新しい Store インスタンスを作成し、スキーマを適用（マイグレーション）します。
@@ -186,6 +190,8 @@ func (s *Store) Create(ctx context.Context, m *domain.Memory) error {
 	if err != nil {
 		return fmt.Errorf("failed to insert memory: %w", err)
 	}
+
+	s.invalidateCache()
 	return nil
 }
 
@@ -265,6 +271,7 @@ func (s *Store) Update(ctx context.Context, m *domain.Memory) error {
 	}
 
 	m.Version++
+	s.invalidateCache()
 	return nil
 }
 
@@ -283,6 +290,7 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 		return domain.ErrMemoryNotFound
 	}
 
+	s.invalidateCache()
 	return nil
 }
 
@@ -540,6 +548,13 @@ func (s *Store) SetSystemSetting(ctx context.Context, key, value string) error {
 	return nil
 }
 
+func (s *Store) invalidateCache() {
+	s.cacheMu.Lock()
+	s.cacheValid = false
+	s.cachedGroup = nil
+	s.cacheMu.Unlock()
+}
+
 const (
 	defaultSimilarityThreshold = 0.35
 	// lengthRatioThreshold は Jaccard 類似度が similarityThreshold (0.35) 以上になり得ない長さの比（約2.85倍以上）を早期スキップするためのしきい値です。
@@ -548,12 +563,33 @@ const (
 )
 
 func (s *Store) GetCleanupCandidates(ctx context.Context, limit, offset int) ([]*domain.CleanupGroup, error) {
+	s.cacheMu.RLock()
+	if s.cacheValid {
+		allGroups := s.cachedGroup
+		s.cacheMu.RUnlock()
+
+		return paginateCleanupGroups(allGroups, limit, offset), nil
+	}
+	s.cacheMu.RUnlock()
+
+	s.cacheMu.Lock()
+	// Double-check cache inside write lock
+	if s.cacheValid {
+		allGroups := s.cachedGroup
+		s.cacheMu.Unlock()
+		return paginateCleanupGroups(allGroups, limit, offset), nil
+	}
+
 	memories, err := s.List(ctx, domain.MemoryFilter{}, 1000)
 	if err != nil {
+		s.cacheMu.Unlock()
 		return nil, err
 	}
 
 	if len(memories) < 2 {
+		s.cachedGroup = nil
+		s.cacheValid = true
+		s.cacheMu.Unlock()
 		return nil, nil
 	}
 
@@ -618,7 +654,14 @@ func (s *Store) GetCleanupCandidates(ctx context.Context, limit, offset int) ([]
 		}
 	}
 
-	// ページネーションの適用
+	s.cachedGroup = allGroups
+	s.cacheValid = true
+	s.cacheMu.Unlock()
+
+	return paginateCleanupGroups(allGroups, limit, offset), nil
+}
+
+func paginateCleanupGroups(allGroups []*domain.CleanupGroup, limit, offset int) []*domain.CleanupGroup {
 	if limit <= 0 {
 		limit = defaultCleanupLimit
 	}
@@ -631,5 +674,5 @@ func (s *Store) GetCleanupCandidates(ctx context.Context, limit, offset int) ([]
 		pagedGroups = append(pagedGroups, allGroups[i])
 	}
 
-	return pagedGroups, nil
+	return pagedGroups
 }
