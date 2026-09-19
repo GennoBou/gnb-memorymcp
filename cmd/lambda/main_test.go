@@ -230,3 +230,73 @@ func TestHandleRequest_CORS(t *testing.T) {
 		}
 	})
 }
+
+func TestGetBaseURL(t *testing.T) {
+	tests := []struct {
+		name     string
+		headers  map[string]string
+		expected string
+	}{
+		{
+			name:     "nil headers",
+			headers:  nil,
+			expected: fallbackLambdaURL,
+		},
+		{
+			name:     "empty headers",
+			headers:  map[string]string{},
+			expected: fallbackLambdaURL,
+		},
+		{
+			name: "lowercase host header",
+			headers: map[string]string{
+				"host": "api.example.com",
+			},
+			expected: "https://api.example.com",
+		},
+		{
+			name: "capitalized Host header",
+			headers: map[string]string{
+				"Host": "api.example.com",
+			},
+			expected: "https://api.example.com",
+		},
+		{
+			name: "uppercase HOST header",
+			headers: map[string]string{
+				"HOST": "api.example.com",
+			},
+			expected: "https://api.example.com",
+		},
+		{
+			name: "empty host header value",
+			headers: map[string]string{
+				"host": "",
+			},
+			expected: fallbackLambdaURL,
+		},
+		{
+			name: "empty Host header value capitalized",
+			headers: map[string]string{
+				"Host": "",
+			},
+			expected: fallbackLambdaURL,
+		},
+		{
+			name: "headers with port in host",
+			headers: map[string]string{
+				"Host": "localhost:8080",
+			},
+			expected: "https://localhost:8080",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := getBaseURL(tt.headers)
+			if got != tt.expected {
+				t.Errorf("getBaseURL() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
