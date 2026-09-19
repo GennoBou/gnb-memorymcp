@@ -498,11 +498,10 @@ func (h *Handler) callTool(ctx context.Context, name string, argsJSON json.RawMe
 		}, nil
 
 	case "memory_status":
-		memories, err := h.store.List(ctx, domain.MemoryFilter{}, 1000)
+		total, err := h.store.Count(ctx)
 		if err != nil {
 			return nil, err
 		}
-		total := len(memories)
 
 		lastCleanup, err := h.store.GetSystemSetting(ctx, "last_cleanup_at")
 		if err != nil {

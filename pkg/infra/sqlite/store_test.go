@@ -261,7 +261,16 @@ func TestStore_All(t *testing.T) {
 		t.Errorf("List page 2 expected m2, got: %+v", listOffset1)
 	}
 
-	// 5-3. ListTags のテスト
+	// 5-3. Count のテスト
+	countGot, err := store.Count(ctx)
+	if err != nil {
+		t.Fatalf("Count failed: %v", err)
+	}
+	if countGot != 3 { // m1, m2, m3 (mMix and mEsc were deleted)
+		t.Errorf("Count expected 3, got %d", countGot)
+	}
+
+	// 5-4. ListTags のテスト
 	tagsGot, err := store.ListTags(ctx)
 	if err != nil {
 		t.Fatalf("ListTags failed: %v", err)

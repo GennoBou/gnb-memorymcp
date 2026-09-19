@@ -42,6 +42,7 @@ type MemoryStore interface {
 	Get(ctx context.Context, id string) (*Memory, error)
 	Search(ctx context.Context, query string, topK int) ([]*Memory, error)
 	List(ctx context.Context, filter MemoryFilter, limit int) ([]*Memory, error)
+	Count(ctx context.Context) (int, error)
 	ListTags(ctx context.Context) ([]string, error)
 	Update(ctx context.Context, m *Memory) error
 	Delete(ctx context.Context, id string) error

@@ -40,3 +40,72 @@ func BenchmarkGetCleanupCandidates(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkListCount(b *testing.B) {
+	ctx := context.Background()
+
+	store, err := NewStore("file::memory:?cache=shared", "")
+	if err != nil {
+		b.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	// 1000 種類のメモリを作成
+	for i := 0; i < 1000; i++ {
+		m := &domain.Memory{
+			ID:         fmt.Sprintf("mem_%d", i),
+			Content:    fmt.Sprintf("This is sample memory content number %d for benchmarking full table scan listing versus count query.", i),
+			SourceTool: "benchmark",
+			Importance: 3,
+			Tags:       []string{"benchmark", "test"},
+		}
+		if err := store.Create(ctx, m); err != nil {
+			b.Fatalf("failed to create memory: %v", err)
+		}
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for i := 0; i < b.N; i++ {
+		memories, err := store.List(ctx, domain.MemoryFilter{}, 1000)
+		if err != nil {
+			b.Fatalf("List failed: %v", err)
+		}
+		_ = len(memories)
+	}
+}
+
+func BenchmarkCount(b *testing.B) {
+	ctx := context.Background()
+
+	store, err := NewStore("file::memory:?cache=shared", "")
+	if err != nil {
+		b.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	// 1000 種類のメモリを作成
+	for i := 0; i < 1000; i++ {
+		m := &domain.Memory{
+			ID:         fmt.Sprintf("mem_%d", i),
+			Content:    fmt.Sprintf("This is sample memory content number %d for benchmarking full table scan listing versus count query.", i),
+			SourceTool: "benchmark",
+			Importance: 3,
+			Tags:       []string{"benchmark", "test"},
+		}
+		if err := store.Create(ctx, m); err != nil {
+			b.Fatalf("failed to create memory: %v", err)
+		}
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for i := 0; i < b.N; i++ {
+		_, err := store.Count(ctx)
+		if err != nil {
+			b.Fatalf("Count failed: %v", err)
+		}
+	}
+}

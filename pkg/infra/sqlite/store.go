@@ -488,6 +488,16 @@ func (s *Store) List(ctx context.Context, filter domain.MemoryFilter, limit int)
 	return memories, nil
 }
 
+func (s *Store) Count(ctx context.Context) (int, error) {
+	query := `SELECT COUNT(*) FROM memories`
+	var count int
+	err := s.db.QueryRowContext(ctx, query).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count memories: %w", err)
+	}
+	return count, nil
+}
+
 func (s *Store) ListTags(ctx context.Context) ([]string, error) {
 	sqlQuery := `
 		SELECT DISTINCT value
