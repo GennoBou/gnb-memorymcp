@@ -186,3 +186,82 @@ func TestHandleRequest_CORS(t *testing.T) {
 		}
 	})
 }
+
+func TestGetHeaderValue(t *testing.T) {
+	tests := []struct {
+		name     string
+		headers  map[string]string
+		key      string
+		expected string
+	}{
+		{
+			name: "Exact match with lowercase key in map",
+			headers: map[string]string{
+				"accept": "application/json",
+			},
+			key:      "accept",
+			expected: "application/json",
+		},
+		{
+			name: "Case insensitive match with uppercase key in map and lowercase search key",
+			headers: map[string]string{
+				"Authorization": "Bearer test-token",
+			},
+			key:      "authorization",
+			expected: "Bearer test-token",
+		},
+		{
+			name: "Case insensitive match with lowercase key in map and uppercase search key",
+			headers: map[string]string{
+				"content-type": "application/json",
+			},
+			key:      "Content-Type",
+			expected: "application/json",
+		},
+		{
+			name: "Case insensitive match with mixed case key in map and mixed case search key",
+			headers: map[string]string{
+				"X-Custom-Header": "value123",
+			},
+			key:      "x-CUSTOM-header",
+			expected: "value123",
+		},
+		{
+			name: "Header key not present",
+			headers: map[string]string{
+				"host": "localhost",
+			},
+			key:      "authorization",
+			expected: "",
+		},
+		{
+			name: "Header key present but value is empty",
+			headers: map[string]string{
+				"x-empty-header": "",
+			},
+			key:      "x-empty-header",
+			expected: "",
+		},
+		{
+			name:     "Empty headers map",
+			headers:  map[string]string{},
+			key:      "host",
+			expected: "",
+		},
+		{
+			name:     "Nil headers map",
+			headers:  nil,
+			key:      "host",
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := getHeaderValue(tt.headers, tt.key)
+			if got != tt.expected {
+				t.Errorf("getHeaderValue() = %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}
