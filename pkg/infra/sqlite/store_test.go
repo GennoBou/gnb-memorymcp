@@ -890,3 +890,47 @@ func TestStore_ExplainQueryPlan(t *testing.T) {
 		})
 	}
 }
+
+func TestStore_Count(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	// 初期状態: 0件
+	count, err := store.Count(ctx)
+	if err != nil {
+		t.Fatalf("Count failed: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("expected count 0, got %d", count)
+	}
+
+	// 2件作成
+	m1 := &domain.Memory{ID: "cnt_01", Content: "Test 1", SourceTool: "test"}
+	m2 := &domain.Memory{ID: "cnt_02", Content: "Test 2", SourceTool: "test"}
+	if err := store.Create(ctx, m1); err != nil {
+		t.Fatalf("Create m1 failed: %v", err)
+	}
+	if err := store.Create(ctx, m2); err != nil {
+		t.Fatalf("Create m2 failed: %v", err)
+	}
+
+	count, err = store.Count(ctx)
+	if err != nil {
+		t.Fatalf("Count failed: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("expected count 2, got %d", count)
+	}
+
+	// 1件削除
+	if err := store.Delete(ctx, m1.ID); err != nil {
+		t.Fatalf("Delete m1 failed: %v", err)
+	}
+	count, err = store.Count(ctx)
+	if err != nil {
+		t.Fatalf("Count failed: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("expected count 1, got %d", count)
+	}
+}
