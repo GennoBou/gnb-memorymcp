@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"reflect"
 	"testing"
 
 	"github.com/aws/aws-lambda-go/events"
@@ -429,3 +430,138 @@ func TestGetHeaderValue(t *testing.T) {
 		})
 	}
 }
+
+func TestGetCORSHeaders(t *testing.T) {
+	tests := []struct {
+		name           string
+		allowedOrigins string
+		reqHeaders     map[string]string
+		expected       map[string]string
+	}{
+		{
+			name:           "ALLOWED_ORIGINSが未設定でOriginヘッダーなし",
+			allowedOrigins: "",
+			reqHeaders:     map[string]string{},
+			expected:       map[string]string{},
+		},
+		{
+			name:           "ALLOWED_ORIGINSが未設定でOriginヘッダーあり",
+			allowedOrigins: "",
+			reqHeaders: map[string]string{
+				"Origin": "https://example.com",
+			},
+			expected: map[string]string{},
+		},
+		{
+			name:           "ALLOWED_ORIGINSがワイルドカード(*)でOriginヘッダーなし",
+			allowedOrigins: "*",
+			reqHeaders:     map[string]string{},
+			expected: map[string]string{
+				"Access-Control-Allow-Origin": "*",
+			},
+		},
+		{
+			name:           "ALLOWED_ORIGINSがワイルドカード(*)でOriginヘッダーあり",
+			allowedOrigins: "*",
+			reqHeaders: map[string]string{
+				"Origin": "https://example.com",
+			},
+			expected: map[string]string{
+				"Access-Control-Allow-Origin": "*",
+			},
+		},
+		{
+			name:           "ALLOWED_ORIGINSがワイルドカード(*)でreqHeadersがnil",
+			allowedOrigins: "*",
+			reqHeaders:     nil,
+			expected: map[string]string{
+				"Access-Control-Allow-Origin": "*",
+			},
+		},
+		{
+			name:           "ALLOWED_ORIGINSリストにワイルドカード(*)が含まれる場合",
+			allowedOrigins: "https://example.com, *",
+			reqHeaders: map[string]string{
+				"Origin": "https://unlisted.com",
+			},
+			expected: map[string]string{
+				"Access-Control-Allow-Origin": "*",
+			},
+		},
+		{
+			name:           "複数オリジン指定で完全一致",
+			allowedOrigins: "https://foo.com, https://bar.com",
+			reqHeaders: map[string]string{
+				"Origin": "https://bar.com",
+			},
+			expected: map[string]string{
+				"Access-Control-Allow-Origin": "https://bar.com",
+				"Vary":                        "Origin",
+			},
+		},
+		{
+			name:           "大文字小文字違いの一致（リクエスト側のOrigin値が保持される）",
+			allowedOrigins: "https://example.com",
+			reqHeaders: map[string]string{
+				"Origin": "https://EXAMPLE.COM",
+			},
+			expected: map[string]string{
+				"Access-Control-Allow-Origin": "https://EXAMPLE.COM",
+				"Vary":                        "Origin",
+			},
+		},
+		{
+			name:           "小文字のoriginヘッダー名で一致",
+			allowedOrigins: "https://example.com",
+			reqHeaders: map[string]string{
+				"origin": "https://example.com",
+			},
+			expected: map[string]string{
+				"Access-Control-Allow-Origin": "https://example.com",
+				"Vary":                        "Origin",
+			},
+		},
+		{
+			name:           "複数オリジン指定で不一致",
+			allowedOrigins: "https://foo.com, https://bar.com",
+			reqHeaders: map[string]string{
+				"Origin": "https://baz.com",
+			},
+			expected: map[string]string{},
+		},
+		{
+			name:           "複数オリジン指定でOriginヘッダーなし",
+			allowedOrigins: "https://foo.com, https://bar.com",
+			reqHeaders:     map[string]string{},
+			expected:       map[string]string{},
+		},
+		{
+			name:           "複数オリジン指定でreqHeadersがnil",
+			allowedOrigins: "https://foo.com, https://bar.com",
+			reqHeaders:     nil,
+			expected:       map[string]string{},
+		},
+		{
+			name:           "前後の余白付きオリジン指定でトリミングされて一致",
+			allowedOrigins: " https://foo.com ,  https://bar.com ",
+			reqHeaders: map[string]string{
+				"Origin": "https://foo.com",
+			},
+			expected: map[string]string{
+				"Access-Control-Allow-Origin": "https://foo.com",
+				"Vary":                        "Origin",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("ALLOWED_ORIGINS", tt.allowedOrigins)
+			got := getCORSHeaders(tt.reqHeaders)
+			if !reflect.DeepEqual(got, tt.expected) {
+				t.Errorf("getCORSHeaders() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
