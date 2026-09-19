@@ -240,373 +240,403 @@ func (h *Handler) Handle(ctx context.Context, req *Request) *Response {
 func (h *Handler) callTool(ctx context.Context, name string, argsJSON json.RawMessage) (*CallToolResult, error) {
 	switch name {
 	case "memory_create":
-		var args CreateArgs
-		if err := json.Unmarshal(argsJSON, &args); err != nil {
-			return nil, fmt.Errorf("invalid arguments for memory_create: %w", err)
-		}
-		if args.Content == "" {
-			return nil, errors.New("content is required")
-		}
-		if utf8.RuneCountInString(args.Content) > 10000 {
-			return nil, fmt.Errorf("content exceeds maximum length of 10000 characters (got %d)", utf8.RuneCountInString(args.Content))
-		}
-		if args.SourceTool == "" {
-			return nil, errors.New("source_tool is required")
-		}
-		if len(args.Tags) > 10 {
-			return nil, fmt.Errorf("tags exceed maximum count of 10 (got %d)", len(args.Tags))
-		}
-		if args.Importance < 0 || args.Importance > 10 {
-			return nil, fmt.Errorf("importance must be between 0 and 10 (got %d)", args.Importance)
-		}
-
-		id := ulid.Make().String()
-
-		m := &domain.Memory{
-			ID:         id,
-			Content:    args.Content,
-			SourceTool: args.SourceTool,
-			Tags:       args.Tags,
-			Metadata:   args.Metadata,
-			Importance: args.Importance,
-		}
-
-		if err := h.store.Create(ctx, m); err != nil {
-			return nil, err
-		}
-
-		return NewTextResult(fmt.Sprintf("Memory created successfully with ID: %s", id)), nil
-
+		return h.handleMemoryCreate(ctx, argsJSON)
 	case "memory_search":
-		var args SearchArgs
-		if err := json.Unmarshal(argsJSON, &args); err != nil {
-			return nil, fmt.Errorf("invalid arguments for memory_search: %w", err)
-		}
-		if args.Query == "" {
-			return nil, errors.New("query is required")
-		}
-		topK := args.TopK
-		if topK <= 0 {
-			topK = 5
-		} else if topK > 50 {
-			topK = 50
-		}
-
-		memories, err := h.store.Search(ctx, args.Query, topK)
-		if err != nil {
-			return nil, err
-		}
-
-		if len(memories) == 0 {
-			return NewTextResult("No memories found matching the query."), nil
-		}
-
-		var sb strings.Builder
-		sb.WriteString(fmt.Sprintf("Found %d memories:\n\n", len(memories)))
-		for _, m := range memories {
-			tagsStr := strings.Join(m.Tags, ", ")
-			sb.WriteString(fmt.Sprintf("--- Memory ID: %s ---\n", m.ID))
-			sb.WriteString(fmt.Sprintf("Source: %s | Importance: %d | Tags: [%s]\n", m.SourceTool, m.Importance, tagsStr))
-			sb.WriteString(fmt.Sprintf("Content: %s\n\n", m.Content))
-		}
-
-		return NewTextResult(sb.String()), nil
-
+		return h.handleMemorySearch(ctx, argsJSON)
 	case "memory_list":
-		var args ListArgs
-		if err := json.Unmarshal(argsJSON, &args); err != nil {
-			return nil, fmt.Errorf("invalid arguments for memory_list: %w", err)
-		}
-		limit := args.Limit
-		if limit <= 0 {
-			limit = 20
-		} else if limit > 100 {
-			limit = 100
-		}
-
-		filter := domain.MemoryFilter{
-			SourceTool: args.SourceTool,
-			Tag:        args.Tag,
-			Offset:     args.Offset,
-			SortBy:     args.SortBy,
-			Order:      args.Order,
-		}
-
-		memories, err := h.store.List(ctx, filter, limit)
-		if err != nil {
-			return nil, err
-		}
-
-		if len(memories) == 0 {
-			return &CallToolResult{
-				Content: []Content{
-					{Type: "text", Text: "No memories found."},
-				},
-			}, nil
-		}
-
-		var sb strings.Builder
-		sb.WriteString(fmt.Sprintf("Listing %d memories:\n\n", len(memories)))
-		for _, m := range memories {
-			tagsStr := strings.Join(m.Tags, ", ")
-			sb.WriteString(fmt.Sprintf("- ID: %s | Source: %s | Importance: %d | Tags: [%s] | Created: %s\n  Content: %s\n",
-				m.ID, m.SourceTool, m.Importance, tagsStr, m.CreatedAt.Format(time.RFC3339), m.Content))
-		}
-
-		return &CallToolResult{
-			Content: []Content{
-				{Type: "text", Text: sb.String()},
-			},
-		}, nil
-
+		return h.handleMemoryList(ctx, argsJSON)
 	case "memory_get":
-		var args GetArgs
-		if err := json.Unmarshal(argsJSON, &args); err != nil {
-			return nil, fmt.Errorf("invalid arguments for memory_get: %w", err)
-		}
-		if args.ID == "" {
-			return nil, errors.New("id is required")
-		}
-
-		m, err := h.store.Get(ctx, args.ID)
-		if err != nil {
-			if errors.Is(err, domain.ErrMemoryNotFound) {
-				return &CallToolResult{
-					Content: []Content{
-						{Type: "text", Text: fmt.Sprintf("Memory with ID %s not found.", args.ID)},
-					},
-					IsError: true,
-				}, nil
-			}
-			return nil, err
-		}
-
-		tagsStr := strings.Join(m.Tags, ", ")
-		metadataJSON, _ := json.MarshalIndent(m.Metadata, "", "  ")
-
-		var sb strings.Builder
-		sb.WriteString(fmt.Sprintf("Memory ID: %s\n", m.ID))
-		sb.WriteString(fmt.Sprintf("Source: %s\n", m.SourceTool))
-		sb.WriteString(fmt.Sprintf("Importance: %d\n", m.Importance))
-		sb.WriteString(fmt.Sprintf("Tags: [%s]\n", tagsStr))
-		sb.WriteString(fmt.Sprintf("Created: %s\n", m.CreatedAt.Format(time.RFC3339)))
-		sb.WriteString(fmt.Sprintf("Updated: %s\n", m.UpdatedAt.Format(time.RFC3339)))
-		sb.WriteString(fmt.Sprintf("Metadata:\n%s\n\n", string(metadataJSON)))
-		sb.WriteString(fmt.Sprintf("Content: %s\n", m.Content))
-
-		return &CallToolResult{
-			Content: []Content{
-				{Type: "text", Text: sb.String()},
-			},
-		}, nil
-
+		return h.handleMemoryGet(ctx, argsJSON)
 	case "tags_list":
-		tags, err := h.store.ListTags(ctx)
-		if err != nil {
-			return nil, err
-		}
-
-		if len(tags) == 0 {
-			return &CallToolResult{
-				Content: []Content{
-					{Type: "text", Text: "No tags found."},
-				},
-			}, nil
-		}
-
-		var sb strings.Builder
-		sb.WriteString("Available tags:\n")
-		for _, tag := range tags {
-			sb.WriteString(fmt.Sprintf("- %s\n", tag))
-		}
-
-		return &CallToolResult{
-			Content: []Content{
-				{Type: "text", Text: sb.String()},
-			},
-		}, nil
-
+		return h.handleTagsList(ctx)
 	case "memory_update":
-		var args UpdateArgs
-		if err := json.Unmarshal(argsJSON, &args); err != nil {
-			return nil, fmt.Errorf("invalid arguments for memory_update: %w", err)
-		}
-		if args.ID == "" {
-			return nil, errors.New("id is required")
-		}
-
-		m, err := h.store.Get(ctx, args.ID)
-		if err != nil {
-			return nil, err
-		}
-
-		if args.Content != nil {
-			if utf8.RuneCountInString(*args.Content) > 10000 {
-				return nil, fmt.Errorf("content exceeds maximum length of 10000 characters (got %d)", utf8.RuneCountInString(*args.Content))
-			}
-			m.Content = *args.Content
-		}
-		if args.SourceTool != nil {
-			m.SourceTool = *args.SourceTool
-		}
-		if args.Tags != nil {
-			if len(*args.Tags) > 10 {
-				return nil, fmt.Errorf("tags exceed maximum count of 10 (got %d)", len(*args.Tags))
-			}
-			m.Tags = *args.Tags
-		}
-		if args.Importance != nil {
-			if *args.Importance < 0 || *args.Importance > 10 {
-				return nil, fmt.Errorf("importance must be between 0 and 10 (got %d)", *args.Importance)
-			}
-			m.Importance = *args.Importance
-		}
-		if args.Metadata != nil {
-			m.Metadata = *args.Metadata
-		}
-
-		if err := h.store.Update(ctx, m); err != nil {
-			if errors.Is(err, domain.ErrConflict) {
-				return nil, fmt.Errorf("concurrent update conflict: this memory has been modified by another process. Please retrieve the latest memory and try again: %w", err)
-			}
-			return nil, err
-		}
-
-		return &CallToolResult{
-			Content: []Content{
-				{Type: "text", Text: fmt.Sprintf("Memory ID: %s updated successfully.", m.ID)},
-			},
-		}, nil
-
+		return h.handleMemoryUpdate(ctx, argsJSON)
 	case "memory_delete":
-		var args DeleteArgs
-		if err := json.Unmarshal(argsJSON, &args); err != nil {
-			return nil, fmt.Errorf("invalid arguments for memory_delete: %w", err)
-		}
-		if args.ID == "" {
-			return nil, errors.New("id is required")
-		}
-
-		if err := h.store.Delete(ctx, args.ID); err != nil {
-			return nil, err
-		}
-
-		return &CallToolResult{
-			Content: []Content{
-				{Type: "text", Text: fmt.Sprintf("Memory ID: %s deleted successfully.", args.ID)},
-			},
-		}, nil
-
+		return h.handleMemoryDelete(ctx, argsJSON)
 	case "memory_status":
-		total, err := h.store.Count(ctx)
-		if err != nil {
-			return nil, err
-		}
-
-		lastCleanup, err := h.store.GetSystemSetting(ctx, "last_cleanup_at")
-		if err != nil {
-			return nil, err
-		}
-
-		daysSinceLastCleanup := -1
-		if lastCleanup != "" {
-			parsedTime, err := time.Parse(time.RFC3339, lastCleanup)
-			if err == nil {
-				daysSinceLastCleanup = int(time.Since(parsedTime).Hours() / 24)
-			}
-		}
-
-		candidates, err := h.store.GetCleanupCandidates(ctx, 100, 0)
-		if err != nil {
-			return nil, err
-		}
-		candidatesCount := len(candidates)
-
-		requiresCleanup := false
-		if candidatesCount > 0 || daysSinceLastCleanup >= 7 || lastCleanup == "" {
-			requiresCleanup = true
-		}
-
-		var sb strings.Builder
-		sb.WriteString("Database Status:\n")
-		sb.WriteString(fmt.Sprintf("- Total memories: %d\n", total))
-		if lastCleanup != "" {
-			sb.WriteString(fmt.Sprintf("- Last cleanup: %s (%d days ago)\n", lastCleanup, daysSinceLastCleanup))
-		} else {
-			sb.WriteString("- Last cleanup: never\n")
-		}
-		sb.WriteString(fmt.Sprintf("- Cleanup candidate groups: %d\n", candidatesCount))
-		sb.WriteString(fmt.Sprintf("- Requires cleanup: %v\n", requiresCleanup))
-
-		return &CallToolResult{
-			Content: []Content{
-				{Type: "text", Text: sb.String()},
-			},
-		}, nil
-
+		return h.handleMemoryStatus(ctx)
 	case "memory_consolidate":
-		var args ConsolidateArgs
-		if err := json.Unmarshal(argsJSON, &args); err != nil {
-			return nil, fmt.Errorf("invalid arguments for memory_consolidate: %w", err)
-		}
-		limit := args.Limit
-		if limit <= 0 {
-			limit = 3
-		}
-
-		candidates, err := h.store.GetCleanupCandidates(ctx, limit, args.Offset)
-		if err != nil {
-			return nil, err
-		}
-
-		if len(candidates) == 0 {
-			return &CallToolResult{
-				Content: []Content{
-					{Type: "text", Text: "No memories require consolidation. The database is clean."},
-				},
-			}, nil
-		}
-
-		var sb strings.Builder
-		sb.WriteString(fmt.Sprintf("Found %d groups of memories that may be duplicates or contradict each other.\n", len(candidates)))
-		sb.WriteString("Please review them and merge them using `memory_update` and `memory_delete`.\n\n")
-
-		for idx, group := range candidates {
-			sb.WriteString(fmt.Sprintf("=== Group %d (%s) ===\n", idx+1, group.GroupID))
-			for _, m := range group.Memories {
-				tagsStr := strings.Join(m.Tags, ", ")
-				sb.WriteString(fmt.Sprintf("- ID: %s | Tags: [%s] | Created: %s\n  Content: %s\n",
-					m.ID, tagsStr, m.CreatedAt.Format(time.RFC3339), m.Content))
-			}
-			sb.WriteString("\n")
-		}
-
-		sb.WriteString("Instructions:\n")
-		sb.WriteString("1. For each group, determine the most accurate and up-to-date information.\n")
-		sb.WriteString("2. Use `memory_update` on one memory ID to hold the consolidated final information.\n")
-		sb.WriteString("3. Use `memory_delete` on the other memory IDs in the group to remove redundant records.\n")
-		sb.WriteString("4. Once you have finished cleaning all groups, call `memory_cleanup_complete` to update the cleanup status.\n")
-
-		return &CallToolResult{
-			Content: []Content{
-				{Type: "text", Text: sb.String()},
-			},
-		}, nil
-
+		return h.handleMemoryConsolidate(ctx, argsJSON)
 	case "memory_cleanup_complete":
-		nowStr := time.Now().UTC().Format(time.RFC3339)
-		err := h.store.SetSystemSetting(ctx, "last_cleanup_at", nowStr)
-		if err != nil {
-			return nil, err
-		}
-
-		return &CallToolResult{
-			Content: []Content{
-				{Type: "text", Text: fmt.Sprintf("Cleanup completed successfully. Timestamp updated to %s", nowStr)},
-			},
-		}, nil
-
+		return h.handleMemoryCleanupComplete(ctx)
 	default:
 		return nil, fmt.Errorf("unsupported tool: %s", name)
 	}
+}
+
+func (h *Handler) handleMemoryCreate(ctx context.Context, argsJSON json.RawMessage) (*CallToolResult, error) {
+	var args CreateArgs
+	if err := json.Unmarshal(argsJSON, &args); err != nil {
+		return nil, fmt.Errorf("invalid arguments for memory_create: %w", err)
+	}
+	if args.Content == "" {
+		return nil, errors.New("content is required")
+	}
+	if utf8.RuneCountInString(args.Content) > 10000 {
+		return nil, fmt.Errorf("content exceeds maximum length of 10000 characters (got %d)", utf8.RuneCountInString(args.Content))
+	}
+	if args.SourceTool == "" {
+		return nil, errors.New("source_tool is required")
+	}
+	if len(args.Tags) > 10 {
+		return nil, fmt.Errorf("tags exceed maximum count of 10 (got %d)", len(args.Tags))
+	}
+	if args.Importance < 0 || args.Importance > 10 {
+		return nil, fmt.Errorf("importance must be between 0 and 10 (got %d)", args.Importance)
+	}
+
+	id := ulid.Make().String()
+
+	m := &domain.Memory{
+		ID:         id,
+		Content:    args.Content,
+		SourceTool: args.SourceTool,
+		Tags:       args.Tags,
+		Metadata:   args.Metadata,
+		Importance: args.Importance,
+	}
+
+	if err := h.store.Create(ctx, m); err != nil {
+		return nil, err
+	}
+
+	return NewTextResult(fmt.Sprintf("Memory created successfully with ID: %s", id)), nil
+}
+
+func (h *Handler) handleMemorySearch(ctx context.Context, argsJSON json.RawMessage) (*CallToolResult, error) {
+	var args SearchArgs
+	if err := json.Unmarshal(argsJSON, &args); err != nil {
+		return nil, fmt.Errorf("invalid arguments for memory_search: %w", err)
+	}
+	if args.Query == "" {
+		return nil, errors.New("query is required")
+	}
+	topK := args.TopK
+	if topK <= 0 {
+		topK = 5
+	} else if topK > 50 {
+		topK = 50
+	}
+
+	memories, err := h.store.Search(ctx, args.Query, topK)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(memories) == 0 {
+		return NewTextResult("No memories found matching the query."), nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Found %d memories:\n\n", len(memories)))
+	for _, m := range memories {
+		tagsStr := strings.Join(m.Tags, ", ")
+		sb.WriteString(fmt.Sprintf("--- Memory ID: %s ---\n", m.ID))
+		sb.WriteString(fmt.Sprintf("Source: %s | Importance: %d | Tags: [%s]\n", m.SourceTool, m.Importance, tagsStr))
+		sb.WriteString(fmt.Sprintf("Content: %s\n\n", m.Content))
+	}
+
+	return NewTextResult(sb.String()), nil
+}
+
+func (h *Handler) handleMemoryList(ctx context.Context, argsJSON json.RawMessage) (*CallToolResult, error) {
+	var args ListArgs
+	if err := json.Unmarshal(argsJSON, &args); err != nil {
+		return nil, fmt.Errorf("invalid arguments for memory_list: %w", err)
+	}
+	limit := args.Limit
+	if limit <= 0 {
+		limit = 20
+	} else if limit > 100 {
+		limit = 100
+	}
+
+	filter := domain.MemoryFilter{
+		SourceTool: args.SourceTool,
+		Tag:        args.Tag,
+		Offset:     args.Offset,
+		SortBy:     args.SortBy,
+		Order:      args.Order,
+	}
+
+	memories, err := h.store.List(ctx, filter, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(memories) == 0 {
+		return &CallToolResult{
+			Content: []Content{
+				{Type: "text", Text: "No memories found."},
+			},
+		}, nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Listing %d memories:\n\n", len(memories)))
+	for _, m := range memories {
+		tagsStr := strings.Join(m.Tags, ", ")
+		sb.WriteString(fmt.Sprintf("- ID: %s | Source: %s | Importance: %d | Tags: [%s] | Created: %s\n  Content: %s\n",
+			m.ID, m.SourceTool, m.Importance, tagsStr, m.CreatedAt.Format(time.RFC3339), m.Content))
+	}
+
+	return &CallToolResult{
+		Content: []Content{
+			{Type: "text", Text: sb.String()},
+		},
+	}, nil
+}
+
+func (h *Handler) handleMemoryGet(ctx context.Context, argsJSON json.RawMessage) (*CallToolResult, error) {
+	var args GetArgs
+	if err := json.Unmarshal(argsJSON, &args); err != nil {
+		return nil, fmt.Errorf("invalid arguments for memory_get: %w", err)
+	}
+	if args.ID == "" {
+		return nil, errors.New("id is required")
+	}
+
+	m, err := h.store.Get(ctx, args.ID)
+	if err != nil {
+		if errors.Is(err, domain.ErrMemoryNotFound) {
+			return &CallToolResult{
+				Content: []Content{
+					{Type: "text", Text: fmt.Sprintf("Memory with ID %s not found.", args.ID)},
+				},
+				IsError: true,
+			}, nil
+		}
+		return nil, err
+	}
+
+	tagsStr := strings.Join(m.Tags, ", ")
+	metadataJSON, _ := json.MarshalIndent(m.Metadata, "", "  ")
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Memory ID: %s\n", m.ID))
+	sb.WriteString(fmt.Sprintf("Source: %s\n", m.SourceTool))
+	sb.WriteString(fmt.Sprintf("Importance: %d\n", m.Importance))
+	sb.WriteString(fmt.Sprintf("Tags: [%s]\n", tagsStr))
+	sb.WriteString(fmt.Sprintf("Created: %s\n", m.CreatedAt.Format(time.RFC3339)))
+	sb.WriteString(fmt.Sprintf("Updated: %s\n", m.UpdatedAt.Format(time.RFC3339)))
+	sb.WriteString(fmt.Sprintf("Metadata:\n%s\n\n", string(metadataJSON)))
+	sb.WriteString(fmt.Sprintf("Content: %s\n", m.Content))
+
+	return &CallToolResult{
+		Content: []Content{
+			{Type: "text", Text: sb.String()},
+		},
+	}, nil
+}
+
+func (h *Handler) handleTagsList(ctx context.Context) (*CallToolResult, error) {
+	tags, err := h.store.ListTags(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(tags) == 0 {
+		return &CallToolResult{
+			Content: []Content{
+				{Type: "text", Text: "No tags found."},
+			},
+		}, nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString("Available tags:\n")
+	for _, tag := range tags {
+		sb.WriteString(fmt.Sprintf("- %s\n", tag))
+	}
+
+	return &CallToolResult{
+		Content: []Content{
+			{Type: "text", Text: sb.String()},
+		},
+	}, nil
+}
+
+func (h *Handler) handleMemoryUpdate(ctx context.Context, argsJSON json.RawMessage) (*CallToolResult, error) {
+	var args UpdateArgs
+	if err := json.Unmarshal(argsJSON, &args); err != nil {
+		return nil, fmt.Errorf("invalid arguments for memory_update: %w", err)
+	}
+	if args.ID == "" {
+		return nil, errors.New("id is required")
+	}
+
+	m, err := h.store.Get(ctx, args.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	if args.Content != nil {
+		if utf8.RuneCountInString(*args.Content) > 10000 {
+			return nil, fmt.Errorf("content exceeds maximum length of 10000 characters (got %d)", utf8.RuneCountInString(*args.Content))
+		}
+		m.Content = *args.Content
+	}
+	if args.SourceTool != nil {
+		m.SourceTool = *args.SourceTool
+	}
+	if args.Tags != nil {
+		if len(*args.Tags) > 10 {
+			return nil, fmt.Errorf("tags exceed maximum count of 10 (got %d)", len(*args.Tags))
+		}
+		m.Tags = *args.Tags
+	}
+	if args.Importance != nil {
+		if *args.Importance < 0 || *args.Importance > 10 {
+			return nil, fmt.Errorf("importance must be between 0 and 10 (got %d)", *args.Importance)
+		}
+		m.Importance = *args.Importance
+	}
+	if args.Metadata != nil {
+		m.Metadata = *args.Metadata
+	}
+
+	if err := h.store.Update(ctx, m); err != nil {
+		if errors.Is(err, domain.ErrConflict) {
+			return nil, fmt.Errorf("concurrent update conflict: this memory has been modified by another process. Please retrieve the latest memory and try again: %w", err)
+		}
+		return nil, err
+	}
+
+	return &CallToolResult{
+		Content: []Content{
+			{Type: "text", Text: fmt.Sprintf("Memory ID: %s updated successfully.", m.ID)},
+		},
+	}, nil
+}
+
+func (h *Handler) handleMemoryDelete(ctx context.Context, argsJSON json.RawMessage) (*CallToolResult, error) {
+	var args DeleteArgs
+	if err := json.Unmarshal(argsJSON, &args); err != nil {
+		return nil, fmt.Errorf("invalid arguments for memory_delete: %w", err)
+	}
+	if args.ID == "" {
+		return nil, errors.New("id is required")
+	}
+
+	if err := h.store.Delete(ctx, args.ID); err != nil {
+		return nil, err
+	}
+
+	return &CallToolResult{
+		Content: []Content{
+			{Type: "text", Text: fmt.Sprintf("Memory ID: %s deleted successfully.", args.ID)},
+		},
+	}, nil
+}
+
+func (h *Handler) handleMemoryStatus(ctx context.Context) (*CallToolResult, error) {
+	total, err := h.store.Count(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	lastCleanup, err := h.store.GetSystemSetting(ctx, "last_cleanup_at")
+	if err != nil {
+		return nil, err
+	}
+
+	daysSinceLastCleanup := -1
+	if lastCleanup != "" {
+		parsedTime, err := time.Parse(time.RFC3339, lastCleanup)
+		if err == nil {
+			daysSinceLastCleanup = int(time.Since(parsedTime).Hours() / 24)
+		}
+	}
+
+	candidates, err := h.store.GetCleanupCandidates(ctx, 100, 0)
+	if err != nil {
+		return nil, err
+	}
+	candidatesCount := len(candidates)
+
+	requiresCleanup := false
+	if candidatesCount > 0 || daysSinceLastCleanup >= 7 || lastCleanup == "" {
+		requiresCleanup = true
+	}
+
+	var sb strings.Builder
+	sb.WriteString("Database Status:\n")
+	sb.WriteString(fmt.Sprintf("- Total memories: %d\n", total))
+	if lastCleanup != "" {
+		sb.WriteString(fmt.Sprintf("- Last cleanup: %s (%d days ago)\n", lastCleanup, daysSinceLastCleanup))
+	} else {
+		sb.WriteString("- Last cleanup: never\n")
+	}
+	sb.WriteString(fmt.Sprintf("- Cleanup candidate groups: %d\n", candidatesCount))
+	sb.WriteString(fmt.Sprintf("- Requires cleanup: %v\n", requiresCleanup))
+
+	return &CallToolResult{
+		Content: []Content{
+			{Type: "text", Text: sb.String()},
+		},
+	}, nil
+}
+
+func (h *Handler) handleMemoryConsolidate(ctx context.Context, argsJSON json.RawMessage) (*CallToolResult, error) {
+	var args ConsolidateArgs
+	if err := json.Unmarshal(argsJSON, &args); err != nil {
+		return nil, fmt.Errorf("invalid arguments for memory_consolidate: %w", err)
+	}
+	limit := args.Limit
+	if limit <= 0 {
+		limit = 3
+	}
+
+	candidates, err := h.store.GetCleanupCandidates(ctx, limit, args.Offset)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(candidates) == 0 {
+		return &CallToolResult{
+			Content: []Content{
+				{Type: "text", Text: "No memories require consolidation. The database is clean."},
+			},
+		}, nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Found %d groups of memories that may be duplicates or contradict each other.\n", len(candidates)))
+	sb.WriteString("Please review them and merge them using `memory_update` and `memory_delete`.\n\n")
+
+	for idx, group := range candidates {
+		sb.WriteString(fmt.Sprintf("=== Group %d (%s) ===\n", idx+1, group.GroupID))
+		for _, m := range group.Memories {
+			tagsStr := strings.Join(m.Tags, ", ")
+			sb.WriteString(fmt.Sprintf("- ID: %s | Tags: [%s] | Created: %s\n  Content: %s\n",
+				m.ID, tagsStr, m.CreatedAt.Format(time.RFC3339), m.Content))
+		}
+		sb.WriteString("\n")
+	}
+
+	sb.WriteString("Instructions:\n")
+	sb.WriteString("1. For each group, determine the most accurate and up-to-date information.\n")
+	sb.WriteString("2. Use `memory_update` on one memory ID to hold the consolidated final information.\n")
+	sb.WriteString("3. Use `memory_delete` on the other memory IDs in the group to remove redundant records.\n")
+	sb.WriteString("4. Once you have finished cleaning all groups, call `memory_cleanup_complete` to update the cleanup status.\n")
+
+	return &CallToolResult{
+		Content: []Content{
+			{Type: "text", Text: sb.String()},
+		},
+	}, nil
+}
+
+func (h *Handler) handleMemoryCleanupComplete(ctx context.Context) (*CallToolResult, error) {
+	nowStr := time.Now().UTC().Format(time.RFC3339)
+	err := h.store.SetSystemSetting(ctx, "last_cleanup_at", nowStr)
+	if err != nil {
+		return nil, err
+	}
+
+	return &CallToolResult{
+		Content: []Content{
+			{Type: "text", Text: fmt.Sprintf("Cleanup completed successfully. Timestamp updated to %s", nowStr)},
+		},
+	}, nil
 }
