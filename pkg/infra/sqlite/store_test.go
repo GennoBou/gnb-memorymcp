@@ -407,6 +407,140 @@ func TestStore_All(t *testing.T) {
 	}
 }
 
+func TestStore_Update(t *testing.T) {
+	ctx := context.Background()
+
+	store, err := NewStore("file::memory:?cache=shared", "")
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	// テスト用の初期記憶を作成
+	initMem := &domain.Memory{
+		ID:             "mem_update_test",
+		Content:        "Initial Content",
+		SourceTool:     "tool_a",
+		Tags:           []string{"tag1"},
+		Metadata:       map[string]interface{}{"key": "val"},
+		Importance:     3,
+		EmbeddingModel: "model_a",
+	}
+	if err := store.Create(ctx, initMem); err != nil {
+		t.Fatalf("Create initMem failed: %v", err)
+	}
+
+	fetched, err := store.Get(ctx, initMem.ID)
+	if err != nil {
+		t.Fatalf("Get initMem failed: %v", err)
+	}
+
+	t.Run("Success Path", func(t *testing.T) {
+		m := &domain.Memory{
+			ID:             fetched.ID,
+			Content:        "Updated Content",
+			SourceTool:     "tool_b",
+			Tags:           []string{"tag1", "tag2"},
+			Metadata:       map[string]interface{}{"key": "val2"},
+			Importance:     5,
+			EmbeddingModel: "model_b",
+			Version:        fetched.Version,
+		}
+
+		err := store.Update(ctx, m)
+		if err != nil {
+			t.Fatalf("expected update to succeed, got %v", err)
+		}
+
+		if m.Version != fetched.Version+1 {
+			t.Errorf("expected version to be %d, got %d", fetched.Version+1, m.Version)
+		}
+
+		updated, err := store.Get(ctx, m.ID)
+		if err != nil {
+			t.Fatalf("Get updated memory failed: %v", err)
+		}
+		if updated.Content != "Updated Content" || updated.Version != m.Version {
+			t.Errorf("Get returned unexpected content or version: %+v", updated)
+		}
+	})
+
+	t.Run("Zero Rows Affected - Non-existent ID", func(t *testing.T) {
+		m := &domain.Memory{
+			ID:      "non_existent_id",
+			Content: "Content",
+			Version: 1,
+		}
+		err := store.Update(ctx, m)
+		if !errors.Is(err, domain.ErrConflict) {
+			t.Errorf("expected domain.ErrConflict, got %v", err)
+		}
+	})
+
+	t.Run("Zero Rows Affected - Stale Version Conflict", func(t *testing.T) {
+		latest, err := store.Get(ctx, initMem.ID)
+		if err != nil {
+			t.Fatalf("Get latest memory failed: %v", err)
+		}
+
+		staleMem := &domain.Memory{
+			ID:      latest.ID,
+			Content: "Stale Content",
+			Version: latest.Version - 1, // 古いバージョン
+		}
+		err = store.Update(ctx, staleMem)
+		if !errors.Is(err, domain.ErrConflict) {
+			t.Errorf("expected domain.ErrConflict for stale version, got %v", err)
+		}
+	})
+
+	t.Run("JSON Marshal Error - Invalid Tags", func(t *testing.T) {
+		latest, err := store.Get(ctx, initMem.ID)
+		if err != nil {
+			t.Fatalf("Get latest memory failed: %v", err)
+		}
+
+		// json.Marshal は unsupported type のスライス（または interface{} 内の channel等）でエラーとなる
+		// 期待される型が []string のため、リフレクションや Unsafe ではなく、タグ配列のマーシャル失敗をテストするために
+		// Metadata にマーシャル不可能なチャネルを設定するケースと別にタグ単体のエラーも確認
+		m := &domain.Memory{
+			ID:      latest.ID,
+			Content: "Content",
+			Version: latest.Version,
+			Tags:    []string{"valid"},
+			Metadata: map[string]interface{}{
+				"invalid": make(chan int),
+			},
+		}
+
+		err = store.Update(ctx, m)
+		if err == nil {
+			t.Error("expected error due to unmarshalable metadata, got nil")
+		}
+	})
+
+	t.Run("Context Canceled Error", func(t *testing.T) {
+		latest, err := store.Get(ctx, initMem.ID)
+		if err != nil {
+			t.Fatalf("Get latest memory failed: %v", err)
+		}
+
+		cancelCtx, cancel := context.WithCancel(ctx)
+		cancel() // 直ちにキャンセル
+
+		m := &domain.Memory{
+			ID:      latest.ID,
+			Content: "Content",
+			Version: latest.Version,
+		}
+
+		err = store.Update(cancelCtx, m)
+		if err == nil {
+			t.Error("expected error with canceled context, got nil")
+		}
+	})
+}
+
 func TestStore_ExplainQueryPlan(t *testing.T) {
 	// インメモリデータベースでStoreを作成
 	store, err := NewStore("file::memory:?cache=shared", "")
