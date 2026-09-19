@@ -10,6 +10,77 @@ import (
 	"github.com/gennobou/gnb-memorymcp/pkg/domain"
 )
 
+func TestStore_Delete(t *testing.T) {
+	store, err := NewStore("file::memory:?cache=shared", "")
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+
+	m1 := &domain.Memory{
+		ID:         "del_mem_01",
+		Content:    "削除テスト用メモリ1",
+		SourceTool: "test",
+	}
+	if err := store.Create(ctx, m1); err != nil {
+		t.Fatalf("failed to create test memory: %v", err)
+	}
+
+	canceledCtx, cancel := context.WithCancel(ctx)
+	cancel()
+
+	tests := []struct {
+		name    string
+		ctx     context.Context
+		id      string
+		wantErr error
+	}{
+		{
+			name:    "正常系: 存在するIDの削除",
+			ctx:     ctx,
+			id:      m1.ID,
+			wantErr: nil,
+		},
+		{
+			name:    "異常系: 存在しないIDの削除で ErrMemoryNotFound",
+			ctx:     ctx,
+			id:      "non_existent_id",
+			wantErr: domain.ErrMemoryNotFound,
+		},
+		{
+			name:    "異常系: キャンセル済み Context によるエラー",
+			ctx:     canceledCtx,
+			id:      "canceled_mem_01",
+			wantErr: context.Canceled,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := store.Delete(tt.ctx, tt.id)
+			if tt.wantErr != nil {
+				if err == nil {
+					t.Fatalf("expected error matching %v, got nil", tt.wantErr)
+				}
+				if !errors.Is(err, tt.wantErr) {
+					t.Errorf("expected error %v, got %v", tt.wantErr, err)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				// 削除されたことを Get で確認
+				_, getErr := store.Get(ctx, tt.id)
+				if !errors.Is(getErr, domain.ErrMemoryNotFound) {
+					t.Errorf("expected ErrMemoryNotFound on Get after Delete, got %v", getErr)
+				}
+			}
+		})
+	}
+}
+
 func TestStore_All(t *testing.T) {
 	ctx := context.Background()
 
