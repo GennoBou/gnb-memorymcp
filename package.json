@@ -1,6 +1,6 @@
 {
   "name": "gnb-memorymcp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Multi-agent shared memory layer (MCP Server) implemented in Go",
   "scripts": {
     "build": "go build -o bin/gnb-memorymcp.exe ./cmd/gnb-memorymcp/main.go",
