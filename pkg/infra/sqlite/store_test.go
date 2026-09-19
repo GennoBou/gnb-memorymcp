@@ -700,6 +700,98 @@ func TestStore_Update(t *testing.T) {
 	})
 }
 
+func TestStore_GetCleanupCandidates_Cache(t *testing.T) {
+	ctx := context.Background()
+
+	store, err := NewStore("file::memory:?cache=shared", "")
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	// Initial memories setup
+	m1 := &domain.Memory{
+		ID:         "mem_cache_01",
+		Content:    "This is sample memory content for cache testing.",
+		SourceTool: "test",
+	}
+	m2 := &domain.Memory{
+		ID:         "mem_cache_02",
+		Content:    "This is sample memory content for cache testing duplicate.",
+		SourceTool: "test",
+	}
+
+	if err := store.Create(ctx, m1); err != nil {
+		t.Fatalf("Create m1 failed: %v", err)
+	}
+	if err := store.Create(ctx, m2); err != nil {
+		t.Fatalf("Create m2 failed: %v", err)
+	}
+
+	// First call populates cache
+	candidates1, err := store.GetCleanupCandidates(ctx, 10, 0)
+	if err != nil {
+		t.Fatalf("GetCleanupCandidates failed: %v", err)
+	}
+	if len(candidates1) != 1 {
+		t.Fatalf("Expected 1 cleanup group, got %d", len(candidates1))
+	}
+	if !store.cacheValid {
+		t.Errorf("Expected cacheValid to be true after GetCleanupCandidates")
+	}
+
+	// Second call uses cache
+	candidates2, err := store.GetCleanupCandidates(ctx, 10, 0)
+	if err != nil {
+		t.Fatalf("GetCleanupCandidates failed: %v", err)
+	}
+	if len(candidates2) != 1 {
+		t.Fatalf("Expected 1 cleanup group from cache, got %d", len(candidates2))
+	}
+
+	// Test cache invalidation on Create
+	m3 := &domain.Memory{
+		ID:         "mem_cache_03",
+		Content:    "Unrelated content completely different.",
+		SourceTool: "test",
+	}
+	if err := store.Create(ctx, m3); err != nil {
+		t.Fatalf("Create m3 failed: %v", err)
+	}
+	if store.cacheValid {
+		t.Errorf("Expected cacheValid to be false after Create")
+	}
+
+	// Re-populate cache
+	_, _ = store.GetCleanupCandidates(ctx, 10, 0)
+	if !store.cacheValid {
+		t.Errorf("Expected cacheValid to be true")
+	}
+
+	// Test cache invalidation on Update
+	m3.Content = "Updated content completely different."
+	if err := store.Update(ctx, m3); err != nil {
+		t.Fatalf("Update m3 failed: %v", err)
+	}
+	if store.cacheValid {
+		t.Errorf("Expected cacheValid to be false after Update")
+	}
+
+	// Re-populate cache
+	_, _ = store.GetCleanupCandidates(ctx, 10, 0)
+	if !store.cacheValid {
+		t.Errorf("Expected cacheValid to be true")
+	}
+
+	// Test cache invalidation on Delete
+	if err := store.Delete(ctx, m3.ID); err != nil {
+		t.Fatalf("Delete m3 failed: %v", err)
+	}
+	if store.cacheValid {
+		t.Errorf("Expected cacheValid to be false after Delete")
+	}
+}
+
 func TestStore_ExplainQueryPlan(t *testing.T) {
 	// インメモリデータベースでStoreを作成
 	store, err := NewStore("file::memory:?cache=shared", "")
