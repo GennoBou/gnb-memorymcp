@@ -33,6 +33,35 @@ func TestParseAllowedOrigins(t *testing.T) {
 				"https://app.example.com": true,
 			},
 		},
+		{
+			name:     "only spaces and commas",
+			input:    "  , ,   ",
+			expected: map[string]bool{},
+		},
+		{
+			name:  "consecutive and trailing commas",
+			input: "https://a.com,,https://b.com,",
+			expected: map[string]bool{
+				"https://a.com": true,
+				"https://b.com": true,
+			},
+		},
+		{
+			name:  "duplicate origins",
+			input: "https://a.com, https://a.com,https://b.com",
+			expected: map[string]bool{
+				"https://a.com": true,
+				"https://b.com": true,
+			},
+		},
+		{
+			name:  "tabs and newlines around origins",
+			input: "\thttps://a.com\n, \r\nhttps://b.com\t",
+			expected: map[string]bool{
+				"https://a.com": true,
+				"https://b.com": true,
+			},
+		},
 	}
 
 	for _, tt := range tests {
