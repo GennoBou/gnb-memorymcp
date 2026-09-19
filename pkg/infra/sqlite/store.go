@@ -99,11 +99,11 @@ func initSchema(db *sql.DB) error {
 		rowsPragma.Close()
 
 		if !hasVersion {
-			log.Println("データベースに version カラムを追加します...")
 			// 既にテーブルが存在している場合のみALTER TABLE
 			var memTableExists bool
 			errCheck := db.QueryRow("SELECT 1 FROM sqlite_master WHERE type='table' AND name='memories'").Scan(&memTableExists)
 			if errCheck == nil {
+				log.Println("データベースに version カラムを追加します...")
 				if _, errAlter := db.Exec("ALTER TABLE memories ADD COLUMN version INTEGER DEFAULT 1"); errAlter != nil {
 					return fmt.Errorf("failed to add version column: %w", errAlter)
 				}

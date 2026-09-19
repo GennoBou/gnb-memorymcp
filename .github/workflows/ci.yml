@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test-and-build:
+    name: Test & Build Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.22'
+          check-latest: true
+
+      - name: Run Unit Tests
+        run: go test -v -short ./cmd/... ./pkg/...
+
+      - name: Verify Windows Build
+        env:
+          CGO_ENABLED: 0
+          GOOS: windows
+          GOARCH: amd64
+        run: go build -ldflags="-s -w" -o /dev/null ./cmd/gnb-memorymcp
+
+      - name: Verify Lambda Build
+        env:
+          CGO_ENABLED: 0
+          GOOS: linux
+          GOARCH: amd64
+        run: go build -ldflags="-s -w" -o /dev/null ./cmd/lambda
