@@ -107,8 +107,10 @@ def interact_task(task_id: str, message: str) -> Dict[str, Any]:
     """提案やタスクにメッセージを送信・指示"""
     endpoint = f"tasks/{task_id}:interact"
     payload = {
-        "message": {
-            "text": message
+        "userActivity": {
+            "feedbackGiven": {
+                "feedback": message
+            }
         }
     }
     return api_request(endpoint, method='POST', data=payload)
