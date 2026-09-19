@@ -49,22 +49,30 @@ func NewStore(dbURL, token string) (*Store, error) {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
+	if err := initSchema(db); err != nil {
+		db.Close()
+		return nil, err
+	}
+
+	return &Store{db: db}, nil
+}
+
+// initSchema はデータベースのスキーマ初期化およびマイグレーション処理を行います。
+func initSchema(db *sql.DB) error {
 	// pingの後にマイグレーションチェック
 	var ftsSQL string
-	err = db.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='memories_fts'").Scan(&ftsSQL)
+	err := db.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='memories_fts'").Scan(&ftsSQL)
 	if err == nil {
 		// すでにテーブルが存在する場合、trigram が使われているかチェック
 		if !strings.Contains(strings.ToLower(ftsSQL), "trigram") {
 			log.Println("古い FTS5 インデックス (unicode61) を検出しました。trigram トークナイザにマイグレーションします...")
 			// memories_fts をドロップする
 			if _, err := db.Exec("DROP TABLE memories_fts;"); err != nil {
-				db.Close()
-				return nil, fmt.Errorf("failed to drop memories_fts: %w", err)
+				return fmt.Errorf("failed to drop memories_fts: %w", err)
 			}
 		}
 	} else if !errors.Is(err, sql.ErrNoRows) {
-		db.Close()
-		return nil, fmt.Errorf("failed to check memories_fts schema: %w", err)
+		return fmt.Errorf("failed to check memories_fts schema: %w", err)
 	}
 
 	// memoriesテーブルにversion列が存在するかチェックし、無ければ追加する
@@ -93,17 +101,14 @@ func NewStore(dbURL, token string) (*Store, error) {
 			errCheck := db.QueryRow("SELECT 1 FROM sqlite_master WHERE type='table' AND name='memories'").Scan(&memTableExists)
 			if errCheck == nil {
 				if _, errAlter := db.Exec("ALTER TABLE memories ADD COLUMN version INTEGER DEFAULT 1"); errAlter != nil {
-					db.Close()
-					return nil, fmt.Errorf("failed to add version column: %w", errAlter)
+					return fmt.Errorf("failed to add version column: %w", errAlter)
 				}
 			} else if !errors.Is(errCheck, sql.ErrNoRows) {
-				db.Close()
-				return nil, fmt.Errorf("failed to check memories table existence: %w", errCheck)
+				return fmt.Errorf("failed to check memories table existence: %w", errCheck)
 			}
 		}
 	} else {
-		db.Close()
-		return nil, fmt.Errorf("failed to check memories table info: %w", err)
+		return fmt.Errorf("failed to check memories table info: %w", err)
 	}
 
 	// テーブル初期化（簡易マイグレーション）
@@ -140,18 +145,16 @@ func NewStore(dbURL, token string) (*Store, error) {
 			continue
 		}
 		if _, err := db.Exec(query); err != nil {
-			db.Close()
-			return nil, fmt.Errorf("failed to run schema query (%s): %w", query, err)
+			return fmt.Errorf("failed to run schema query (%s): %w", query, err)
 		}
 	}
 
 	// 既存データがある場合は再インデックス
 	if _, err := db.Exec("INSERT INTO memories_fts(rowid, content) SELECT rowid, content FROM memories WHERE rowid NOT IN (SELECT rowid FROM memories_fts);"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to rebuild fts index: %w", err)
+		return fmt.Errorf("failed to rebuild fts index: %w", err)
 	}
 
-	return &Store{db: db}, nil
+	return nil
 }
 
 func (s *Store) Close() error {
