@@ -300,3 +300,53 @@ func TestGetBaseURL(t *testing.T) {
 		})
 	}
 }
+
+func TestDecodeRequestBody(t *testing.T) {
+	tests := []struct {
+		name     string
+		req      events.APIGatewayV2HTTPRequest
+		expected string
+	}{
+		{
+			name: "plain text body when IsBase64Encoded is false",
+			req: events.APIGatewayV2HTTPRequest{
+				IsBase64Encoded: false,
+				Body:            `{"hello":"world"}`,
+			},
+			expected: `{"hello":"world"}`,
+		},
+		{
+			name: "valid base64 encoded body when IsBase64Encoded is true",
+			req: events.APIGatewayV2HTTPRequest{
+				IsBase64Encoded: true,
+				Body:            "aGVsbG8gd29ybGQ=", // "hello world" in base64
+			},
+			expected: `hello world`,
+		},
+		{
+			name: "invalid base64 encoded body fallback when IsBase64Encoded is true",
+			req: events.APIGatewayV2HTTPRequest{
+				IsBase64Encoded: true,
+				Body:            "!!!invalid-base64!!!",
+			},
+			expected: "!!!invalid-base64!!!",
+		},
+		{
+			name: "empty body",
+			req: events.APIGatewayV2HTTPRequest{
+				IsBase64Encoded: false,
+				Body:            "",
+			},
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := decodeRequestBody(tt.req)
+			if string(got) != tt.expected {
+				t.Errorf("decodeRequestBody() = %q, want %q", string(got), tt.expected)
+			}
+		})
+	}
+}
