@@ -439,6 +439,38 @@ func TestToolHandlers(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "concurrent update conflict") {
 			t.Errorf("unexpected error for conflict: %v", err)
 		}
+		store.updateErr = nil
+
+		// Invalid content (length > 10000)
+		tooLongContent := strings.Repeat("a", 10001)
+		_, err = h.callTool(ctx, "memory_update", json.RawMessage(`{"id":"m1","content":"`+tooLongContent+`"}`))
+		if err == nil || !strings.Contains(err.Error(), "content exceeds maximum length") {
+			t.Errorf("expected error for content exceeding max length, got: %v", err)
+		}
+
+		// Invalid tags (count > 10)
+		_, err = h.callTool(ctx, "memory_update", json.RawMessage(`{"id":"m1","tags":["1","2","3","4","5","6","7","8","9","10","11"]}`))
+		if err == nil || !strings.Contains(err.Error(), "tags exceed maximum count") {
+			t.Errorf("expected error for tags exceeding max count, got: %v", err)
+		}
+
+		// Invalid importance (< 0 or > 10)
+		_, err = h.callTool(ctx, "memory_update", json.RawMessage(`{"id":"m1","importance":11}`))
+		if err == nil || !strings.Contains(err.Error(), "importance must be between 0 and 10") {
+			t.Errorf("expected error for invalid importance, got: %v", err)
+		}
+
+		// Successful update with source_tool, tags, importance, metadata
+		newSource := "new_source"
+		newImp := 8
+		_, err = h.callTool(ctx, "memory_update", json.RawMessage(`{"id":"m1","source_tool":"new_source","tags":["t1","t2"],"importance":8,"metadata":{"key":"value"}}`))
+		if err != nil {
+			t.Fatalf("unexpected error for full update: %v", err)
+		}
+		m1 := store.memories["m1"]
+		if m1.SourceTool != newSource || len(m1.Tags) != 2 || m1.Importance != newImp || m1.Metadata["key"] != "value" {
+			t.Errorf("updated memory fields mismatched: %+v", m1)
+		}
 	})
 
 	t.Run("memory_delete", func(t *testing.T) {
