@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -212,32 +213,86 @@ func validateAPIKey(apiKey, host string) error {
 	return nil
 }
 
-func parseAllowedOrigins(originsStr string) map[string]bool {
-	if originsStr == "" {
-		return nil
-	}
-	origins := make(map[string]bool)
-	for _, o := range strings.Split(originsStr, ",") {
-		trimmed := strings.TrimSpace(o)
-		if trimmed != "" {
-			origins[trimmed] = true
-		}
-	}
-	return origins
+type AllowedOrigins struct {
+	allowAll bool
+	origins  map[string]bool
 }
 
-func setCORSHeaders(w http.ResponseWriter, r *http.Request, allowedOrigins map[string]bool) {
+func parseAllowedOrigins(originsStr string) *AllowedOrigins {
+	if strings.TrimSpace(originsStr) == "" {
+		return nil
+	}
+	ao := &AllowedOrigins{
+		origins: make(map[string]bool),
+	}
+	for _, o := range strings.Split(originsStr, ",") {
+		normalized, ok := normalizeOrigin(o)
+		if !ok {
+			continue
+		}
+		if normalized == "*" {
+			ao.allowAll = true
+		} else {
+			ao.origins[normalized] = true
+		}
+	}
+	if !ao.allowAll && len(ao.origins) == 0 {
+		return nil
+	}
+	return ao
+}
+
+func normalizeOrigin(originStr string) (string, bool) {
+	trimmed := strings.TrimSpace(originStr)
+	if trimmed == "" {
+		return "", false
+	}
+	if trimmed == "*" {
+		return "*", true
+	}
+	u, err := url.Parse(trimmed)
+	if err != nil {
+		return "", false
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return "", false
+	}
+	if u.Host == "" {
+		return "", false
+	}
+	if u.Path != "" && u.Path != "/" {
+		return "", false
+	}
+	if u.RawQuery != "" || u.Fragment != "" || u.User != nil {
+		return "", false
+	}
+	return scheme + "://" + strings.ToLower(u.Host), true
+}
+
+func setCORSHeaders(w http.ResponseWriter, r *http.Request, allowedOrigins *AllowedOrigins) {
+	if allowedOrigins == nil {
+		return
+	}
+	if allowedOrigins.allowAll {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		return
+	}
 	origin := r.Header.Get("Origin")
 	if origin == "" {
 		return
 	}
-	if allowedOrigins != nil && allowedOrigins[origin] {
+	normalized, ok := normalizeOrigin(origin)
+	if !ok || normalized == "*" {
+		return
+	}
+	if allowedOrigins.origins[normalized] {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Vary", "Origin")
 	}
 }
 
-func makeDiscoveryHandler(auth0Domain string, allowedOrigins map[string]bool) http.HandlerFunc {
+func makeDiscoveryHandler(auth0Domain string, allowedOrigins *AllowedOrigins) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		metaJSON, err := auth.GetOAuthMetadataJSON(auth0Domain)
 		if err != nil {
