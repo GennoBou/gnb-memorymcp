@@ -470,9 +470,21 @@ func (h *Handler) handleMemoryUpdate(ctx context.Context, argsJSON json.RawMessa
 		return nil, err
 	}
 
+	if err := applyUpdateArgs(m, &args); err != nil {
+		return nil, err
+	}
+
+	if err := h.updateMemoryInStore(ctx, m); err != nil {
+		return nil, err
+	}
+
+	return buildUpdateMemoryResult(m.ID), nil
+}
+
+func applyUpdateArgs(m *domain.Memory, args *UpdateArgs) error {
 	if args.Content != nil {
 		if utf8.RuneCountInString(*args.Content) > 10000 {
-			return nil, fmt.Errorf("content exceeds maximum length of 10000 characters (got %d)", utf8.RuneCountInString(*args.Content))
+			return fmt.Errorf("content exceeds maximum length of 10000 characters (got %d)", utf8.RuneCountInString(*args.Content))
 		}
 		m.Content = *args.Content
 	}
@@ -481,32 +493,38 @@ func (h *Handler) handleMemoryUpdate(ctx context.Context, argsJSON json.RawMessa
 	}
 	if args.Tags != nil {
 		if len(*args.Tags) > 10 {
-			return nil, fmt.Errorf("tags exceed maximum count of 10 (got %d)", len(*args.Tags))
+			return fmt.Errorf("tags exceed maximum count of 10 (got %d)", len(*args.Tags))
 		}
 		m.Tags = *args.Tags
 	}
 	if args.Importance != nil {
 		if *args.Importance < 0 || *args.Importance > 10 {
-			return nil, fmt.Errorf("importance must be between 0 and 10 (got %d)", *args.Importance)
+			return fmt.Errorf("importance must be between 0 and 10 (got %d)", *args.Importance)
 		}
 		m.Importance = *args.Importance
 	}
 	if args.Metadata != nil {
 		m.Metadata = *args.Metadata
 	}
+	return nil
+}
 
+func (h *Handler) updateMemoryInStore(ctx context.Context, m *domain.Memory) error {
 	if err := h.store.Update(ctx, m); err != nil {
 		if errors.Is(err, domain.ErrConflict) {
-			return nil, fmt.Errorf("concurrent update conflict: this memory has been modified by another process. Please retrieve the latest memory and try again: %w", err)
+			return fmt.Errorf("concurrent update conflict: this memory has been modified by another process. Please retrieve the latest memory and try again: %w", err)
 		}
-		return nil, err
+		return err
 	}
+	return nil
+}
 
+func buildUpdateMemoryResult(id string) *CallToolResult {
 	return &CallToolResult{
 		Content: []Content{
-			{Type: "text", Text: fmt.Sprintf("Memory ID: %s updated successfully.", m.ID)},
+			{Type: "text", Text: fmt.Sprintf("Memory ID: %s updated successfully.", id)},
 		},
-	}, nil
+	}
 }
 
 func (h *Handler) handleMemoryDelete(ctx context.Context, argsJSON json.RawMessage) (*CallToolResult, error) {
