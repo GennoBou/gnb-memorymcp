@@ -166,3 +166,58 @@ func TestDiscoveryHandlerNoAllowedOriginsConfigured(t *testing.T) {
 		t.Errorf("expected empty Access-Control-Allow-Origin when no allowed origins configured, got '%s'", corsHeader)
 	}
 }
+
+func TestValidateAPIKey(t *testing.T) {
+	tests := []struct {
+		name    string
+		apiKey  string
+		host    string
+		wantErr bool
+	}{
+		{
+			name:    "empty api key on localhost",
+			apiKey:  "",
+			host:    "127.0.0.1",
+			wantErr: true,
+		},
+		{
+			name:    "empty api key on 0.0.0.0",
+			apiKey:  "",
+			host:    "0.0.0.0",
+			wantErr: true,
+		},
+		{
+			name:    "dev-key on 0.0.0.0",
+			apiKey:  "dev-key",
+			host:    "0.0.0.0",
+			wantErr: true,
+		},
+		{
+			name:    "dev-key on 127.0.0.1",
+			apiKey:  "dev-key",
+			host:    "127.0.0.1",
+			wantErr: false,
+		},
+		{
+			name:    "custom secure api key on 127.0.0.1",
+			apiKey:  "my-secret-key",
+			host:    "127.0.0.1",
+			wantErr: false,
+		},
+		{
+			name:    "custom secure api key on 0.0.0.0",
+			apiKey:  "my-secret-key",
+			host:    "0.0.0.0",
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateAPIKey(tt.apiKey, tt.host)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateAPIKey() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}

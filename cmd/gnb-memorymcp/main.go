@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -89,20 +90,8 @@ func main() {
 			apiKey = os.Getenv("API_KEY")
 		}
 
-		// バリデーション: 0.0.0.0 (外部公開) の場合、APIキーの設定が必須
-		if host == "0.0.0.0" {
-			if apiKey == "" {
-				log.Fatalf("エラー: ホストに 0.0.0.0 が指定されていますが、API_KEY が設定されていません。外部に公開されるため、APIキーの設定が必須です。")
-			}
-			if apiKey == "dev-key" {
-				log.Fatalf("エラー: ホストに 0.0.0.0 が指定されていますが、API_KEY がデフォルト値 'dev-key' のままです。安全のため、0.0.0.0 バインド時は独自のセキュアなAPIキーを設定してください。")
-			}
-		}
-
-		// デフォルト値のフォールバック (ローカルホストバインド時のみ)
-		if apiKey == "" {
-			apiKey = "dev-key"
-			log.Printf("API_KEY が設定されていません。デフォルト値 'dev-key' を使用します (ローカルバインドのみ)")
+		if err := validateAPIKey(apiKey, host); err != nil {
+			log.Fatalf("%v", err)
 		}
 
 		allowedOrigins := *allowedOriginsFlag
@@ -211,6 +200,16 @@ func runHTTPServer(ctx context.Context, mcpHandler *mcp.Handler, host, port, api
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("サーバーの起動に失敗しました: %v", err)
 	}
+}
+
+func validateAPIKey(apiKey, host string) error {
+	if apiKey == "" {
+		return fmt.Errorf("エラー: API_KEY が設定されていません。HTTP サーバーモードで起動するには API キーの設定が必須です (--api-key フラグまたは API_KEY 環境変数を指定してください)")
+	}
+	if host == "0.0.0.0" && apiKey == "dev-key" {
+		return fmt.Errorf("エラー: ホストに 0.0.0.0 が指定されていますが、API_KEY が 'dev-key' に設定されています。安全のため、0.0.0.0 バインド時は独自のセキュアな API キーを設定してください")
+	}
+	return nil
 }
 
 func parseAllowedOrigins(originsStr string) map[string]bool {
