@@ -49,6 +49,81 @@ func TestNormalizeString(t *testing.T) {
 	}
 }
 
+func TestJaccardSimilarityFromBiGrams(t *testing.T) {
+	tests := []struct {
+		name     string
+		g1       map[string]bool
+		g2       map[string]bool
+		expected float64
+	}{
+		{
+			name:     "both maps nil",
+			g1:       nil,
+			g2:       nil,
+			expected: 0.0,
+		},
+		{
+			name:     "both maps empty",
+			g1:       map[string]bool{},
+			g2:       map[string]bool{},
+			expected: 0.0,
+		},
+		{
+			name:     "one map empty, one map non-empty",
+			g1:       map[string]bool{"ab": true, "bc": true},
+			g2:       map[string]bool{},
+			expected: 0.0,
+		},
+		{
+			name:     "one map nil, one map non-empty",
+			g1:       nil,
+			g2:       map[string]bool{"ab": true},
+			expected: 0.0,
+		},
+		{
+			name:     "completely disjoint bi-grams",
+			g1:       map[string]bool{"ab": true, "bc": true},
+			g2:       map[string]bool{"xy": true, "yz": true},
+			expected: 0.0,
+		},
+		{
+			name:     "identical bi-grams",
+			g1:       map[string]bool{"he": true, "el": true, "ll": true, "lo": true},
+			g2:       map[string]bool{"he": true, "el": true, "ll": true, "lo": true},
+			expected: 1.0,
+		},
+		{
+			name:     "partial match (intersection 1, union 3 -> 1/3)",
+			g1:       map[string]bool{"ab": true, "bc": true},
+			g2:       map[string]bool{"bc": true, "cd": true},
+			expected: 1.0 / 3.0,
+		},
+		{
+			name:     "partial match with subsets (intersection 2, union 4 -> 2/4 = 0.5)",
+			g1:       map[string]bool{"ab": true, "bc": true, "cd": true},
+			g2:       map[string]bool{"bc": true, "cd": true, "de": true},
+			expected: 0.5,
+		},
+	}
+
+	const epsilon = 1e-4
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := jaccardSimilarityFromBiGrams(tt.g1, tt.g2)
+			if math.Abs(got-tt.expected) > epsilon {
+				t.Errorf("jaccardSimilarityFromBiGrams(%v, %v) = %f, want %f", tt.g1, tt.g2, got, tt.expected)
+			}
+
+			// Verify symmetry: jaccardSimilarityFromBiGrams(g1, g2) == jaccardSimilarityFromBiGrams(g2, g1)
+			gotSymmetric := jaccardSimilarityFromBiGrams(tt.g2, tt.g1)
+			if math.Abs(gotSymmetric-tt.expected) > epsilon {
+				t.Errorf("jaccardSimilarityFromBiGrams(%v, %v) [symmetric] = %f, want %f", tt.g2, tt.g1, gotSymmetric, tt.expected)
+			}
+		})
+	}
+}
+
 func TestCharBiGrams(t *testing.T) {
 	tests := []struct {
 		name     string
