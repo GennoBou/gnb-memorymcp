@@ -29,6 +29,30 @@ type Store struct {
 	cacheValid  bool
 }
 
+// parseTagsJSON parses JSON formatted tags with fast-path checks for empty slice/null.
+func parseTagsJSON(s string, target *[]string) error {
+	if s == "" || s == "null" {
+		return nil
+	}
+	if s == "[]" {
+		*target = []string{}
+		return nil
+	}
+	return json.Unmarshal([]byte(s), target)
+}
+
+// parseMetadataJSON parses JSON formatted metadata with fast-path checks for empty map/null.
+func parseMetadataJSON(s string, target *map[string]interface{}) error {
+	if s == "" || s == "null" {
+		return nil
+	}
+	if s == "{}" {
+		*target = map[string]interface{}{}
+		return nil
+	}
+	return json.Unmarshal([]byte(s), target)
+}
+
 // NewStore は新しい Store インスタンスを作成し、スキーマを適用（マイグレーション）します。
 func NewStore(dbURL, token string) (*Store, error) {
 	var connStr string
@@ -229,10 +253,10 @@ func (s *Store) Get(ctx context.Context, id string) (*domain.Memory, error) {
 	}
 
 	if tagsStr.Valid && tagsStr.String != "" {
-		_ = json.Unmarshal([]byte(tagsStr.String), &m.Tags)
+		_ = parseTagsJSON(tagsStr.String, &m.Tags)
 	}
 	if metadataStr.Valid && metadataStr.String != "" {
-		_ = json.Unmarshal([]byte(metadataStr.String), &m.Metadata)
+		_ = parseMetadataJSON(metadataStr.String, &m.Metadata)
 	}
 
 	return &m, nil
@@ -297,6 +321,13 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+type searchCandidate struct {
+	memory      domain.Memory
+	rankVal     float64
+	tagsStr     string
+	metadataStr string
+}
+
 func (s *Store) Search(ctx context.Context, query string, topK int) ([]*domain.Memory, error) {
 	var sqlQuery string
 	var args []interface{}
@@ -337,65 +368,63 @@ func (s *Store) Search(ctx context.Context, query string, topK int) ([]*domain.M
 	}
 	defer rows.Close()
 
-	var memories []*domain.Memory
-	var ranks []float64
+	var candidates []searchCandidate
 
 	for rows.Next() {
-		var m domain.Memory
+		var cand searchCandidate
 		var tagsStr, metadataStr sql.NullString
 		var createdAtStr, updatedAtStr string
 		var lastAccessedStr sql.NullString
-		var rankVal float64
 
 		err := rows.Scan(
-			&m.ID, &m.Content, &m.SourceTool, &tagsStr, &metadataStr, &m.Importance,
-			&m.EmbeddingModel, &m.Version, &createdAtStr, &updatedAtStr, &lastAccessedStr, &rankVal,
+			&cand.memory.ID, &cand.memory.Content, &cand.memory.SourceTool, &tagsStr, &metadataStr, &cand.memory.Importance,
+			&cand.memory.EmbeddingModel, &cand.memory.Version, &createdAtStr, &updatedAtStr, &lastAccessedStr, &cand.rankVal,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan search result: %w", err)
 		}
 
-		m.CreatedAt, _ = time.Parse(time.RFC3339, createdAtStr)
-		m.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAtStr)
+		cand.memory.CreatedAt, _ = time.Parse(time.RFC3339, createdAtStr)
+		cand.memory.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAtStr)
 		if lastAccessedStr.Valid {
 			t, _ := time.Parse(time.RFC3339, lastAccessedStr.String)
-			m.LastAccessed = &t
+			cand.memory.LastAccessed = &t
 		}
 
-		if tagsStr.Valid && tagsStr.String != "" {
-			_ = json.Unmarshal([]byte(tagsStr.String), &m.Tags)
+		if tagsStr.Valid {
+			cand.tagsStr = tagsStr.String
 		}
-		if metadataStr.Valid && metadataStr.String != "" {
-			_ = json.Unmarshal([]byte(metadataStr.String), &m.Metadata)
+		if metadataStr.Valid {
+			cand.metadataStr = metadataStr.String
 		}
 
-		memories = append(memories, &m)
-		ranks = append(ranks, rankVal)
+		candidates = append(candidates, cand)
 	}
 
 	// 再ランキング処理
 	type rankedMemory struct {
-		memory *domain.Memory
-		score  float64
+		index int
+		score float64
 	}
-	var ranked []*rankedMemory
-	for i, m := range memories {
+	ranked := make([]rankedMemory, len(candidates))
+	for i := range candidates {
+		cand := &candidates[i]
 		var ftsScore float64
 		if isFTS {
 			// FTS5の rank は適合度が高いほど負数（値が小さい）。-rank にして適合度が高いほど大きな正数にする。
-			ftsScore = -ranks[i]
+			ftsScore = -cand.rankVal
 		} else {
 			ftsScore = 5.0 // LIKE検索時のデフォルト適合度
 		}
 
 		// 重要度スコア (0〜10) -> 最大 5.0
-		importanceScore := float64(m.Importance) * 0.5
+		importanceScore := float64(cand.memory.Importance) * 0.5
 		// 鮮度スコア (経過日数による時間減衰) -> 最大 5.0
-		days := time.Since(m.UpdatedAt).Hours() / 24.0
+		days := time.Since(cand.memory.UpdatedAt).Hours() / 24.0
 		recencyScore := 5.0 / (1.0 + (days / 14.0)) // 14日で半分に減衰
 
 		totalScore := ftsScore + importanceScore + recencyScore
-		ranked = append(ranked, &rankedMemory{memory: m, score: totalScore})
+		ranked[i] = rankedMemory{index: i, score: totalScore}
 	}
 
 	// スコア降順ソート
@@ -403,10 +432,18 @@ func (s *Store) Search(ctx context.Context, query string, topK int) ([]*domain.M
 		return ranked[i].score > ranked[j].score
 	})
 
-	// 指定された topK 件だけ抽出して返却
+	// 指定された topK 件だけ抽出して遅延アンマーシャル後に返却
 	var result []*domain.Memory
 	for i := 0; i < len(ranked) && i < topK; i++ {
-		result = append(result, ranked[i].memory)
+		cand := &candidates[ranked[i].index]
+		m := cand.memory
+		if cand.tagsStr != "" {
+			_ = parseTagsJSON(cand.tagsStr, &m.Tags)
+		}
+		if cand.metadataStr != "" {
+			_ = parseMetadataJSON(cand.metadataStr, &m.Metadata)
+		}
+		result = append(result, &m)
 	}
 
 	return result, nil
@@ -487,10 +524,10 @@ func (s *Store) List(ctx context.Context, filter domain.MemoryFilter, limit int)
 		}
 
 		if tagsStr.Valid && tagsStr.String != "" {
-			_ = json.Unmarshal([]byte(tagsStr.String), &m.Tags)
+			_ = parseTagsJSON(tagsStr.String, &m.Tags)
 		}
 		if metadataStr.Valid && metadataStr.String != "" {
-			_ = json.Unmarshal([]byte(metadataStr.String), &m.Metadata)
+			_ = parseMetadataJSON(metadataStr.String, &m.Metadata)
 		}
 
 		memories = append(memories, &m)
