@@ -302,6 +302,112 @@ func TestGetBaseURL(t *testing.T) {
 	}
 }
 
+func TestBuildResponse(t *testing.T) {
+	tests := []struct {
+		name         string
+		statusCode   int
+		body         string
+		extraHeaders map[string]string
+		want         events.APIGatewayV2HTTPResponse
+	}{
+		{
+			name:         "正常レスポンス (200 OK, ボディあり, 追加ヘッダーあり)",
+			statusCode:   http.StatusOK,
+			body:         `{"status":"ok"}`,
+			extraHeaders: map[string]string{"Content-Type": "application/json", "X-Custom-Header": "value"},
+			want: events.APIGatewayV2HTTPResponse{
+				StatusCode: http.StatusOK,
+				Body:       `{"status":"ok"}`,
+				Headers:    map[string]string{"Content-Type": "application/json", "X-Custom-Header": "value"},
+			},
+		},
+		{
+			name:         "エラーレスポンス (400 Bad Request, エラーメッセージ文字列)",
+			statusCode:   http.StatusBadRequest,
+			body:         "missing redirect_uri",
+			extraHeaders: map[string]string{"Content-Type": "text/plain"},
+			want: events.APIGatewayV2HTTPResponse{
+				StatusCode: http.StatusBadRequest,
+				Body:       "missing redirect_uri",
+				Headers:    map[string]string{"Content-Type": "text/plain"},
+			},
+		},
+		{
+			name:         "CORSヘッダーおよびプロトコルバージョンヘッダーの統合結果の検証",
+			statusCode:   http.StatusOK,
+			body:         "",
+			extraHeaders: map[string]string{
+				"Access-Control-Allow-Origin":  "https://example.com",
+				"Access-Control-Allow-Methods": "POST, GET, HEAD, OPTIONS",
+				"Access-Control-Allow-Headers": "*",
+				"Mcp-Protocol-Version":         "2026-07-28",
+			},
+			want: events.APIGatewayV2HTTPResponse{
+				StatusCode: http.StatusOK,
+				Body:       "",
+				Headers: map[string]string{
+					"Access-Control-Allow-Origin":  "https://example.com",
+					"Access-Control-Allow-Methods": "POST, GET, HEAD, OPTIONS",
+					"Access-Control-Allow-Headers": "*",
+					"Mcp-Protocol-Version":         "2026-07-28",
+				},
+			},
+		},
+		{
+			name:         "extraHeadersがnilの場合",
+			statusCode:   http.StatusNoContent,
+			body:         "",
+			extraHeaders: nil,
+			want: events.APIGatewayV2HTTPResponse{
+				StatusCode: http.StatusNoContent,
+				Body:       "",
+				Headers:    map[string]string{},
+			},
+		},
+		{
+			name:         "extraHeadersが空マップの場合",
+			statusCode:   http.StatusOK,
+			body:         "hello",
+			extraHeaders: map[string]string{},
+			want: events.APIGatewayV2HTTPResponse{
+				StatusCode: http.StatusOK,
+				Body:       "hello",
+				Headers:    map[string]string{},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := buildResponse(tt.statusCode, tt.body, tt.extraHeaders)
+			if got.StatusCode != tt.want.StatusCode {
+				t.Errorf("buildResponse().StatusCode = %v, want %v", got.StatusCode, tt.want.StatusCode)
+			}
+			if got.Body != tt.want.Body {
+				t.Errorf("buildResponse().Body = %v, want %v", got.Body, tt.want.Body)
+			}
+			if !reflect.DeepEqual(got.Headers, tt.want.Headers) {
+				t.Errorf("buildResponse().Headers = %v, want %v", got.Headers, tt.want.Headers)
+			}
+		})
+	}
+
+	t.Run("元マップへの変更が返却レスポンスのHeadersに影響を与えないこと (独立性検証)", func(t *testing.T) {
+		headers := map[string]string{"X-Original": "initial"}
+		resp := buildResponse(http.StatusOK, "test", headers)
+
+		headers["X-Original"] = "modified"
+		headers["X-New"] = "added"
+
+		if resp.Headers["X-Original"] != "initial" {
+			t.Errorf("expected resp.Headers[\"X-Original\"] to be 'initial', got %q", resp.Headers["X-Original"])
+		}
+		if _, exists := resp.Headers["X-New"]; exists {
+			t.Errorf("expected resp.Headers[\"X-New\"] not to exist")
+		}
+	})
+}
+
 func TestDecodeRequestBody(t *testing.T) {
 	tests := []struct {
 		name     string
