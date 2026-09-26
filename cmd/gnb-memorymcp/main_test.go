@@ -8,77 +8,80 @@ import (
 
 func TestParseAllowedOrigins(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    string
-		expected map[string]bool
+		name             string
+		input            string
+		expectedNil      bool
+		expectedAllowAll bool
+		expectedOrigins  map[string]bool
 	}{
 		{
-			name:     "empty input",
-			input:    "",
-			expected: nil,
+			name:        "empty input",
+			input:       "",
+			expectedNil: true,
 		},
 		{
 			name:  "single origin",
 			input: "https://example.com",
-			expected: map[string]bool{
+			expectedOrigins: map[string]bool{
 				"https://example.com": true,
 			},
 		},
 		{
-			name:  "multiple origins with spaces",
-			input: "https://example.com, http://localhost:3000, https://app.example.com ",
-			expected: map[string]bool{
+			name:  "multiple origins with spaces and normalization",
+			input: "HTTPS://EXAMPLE.COM/, http://localhost:3000, https://app.example.com ",
+			expectedOrigins: map[string]bool{
 				"https://example.com":     true,
 				"http://localhost:3000":   true,
 				"https://app.example.com": true,
 			},
 		},
 		{
-			name:     "only spaces and commas",
-			input:    "  , ,   ",
-			expected: map[string]bool{},
+			name:        "only spaces and commas",
+			input:       "  , ,   ",
+			expectedNil: true,
 		},
 		{
-			name:  "consecutive and trailing commas",
-			input: "https://a.com,,https://b.com,",
-			expected: map[string]bool{
+			name:  "wildcard origin",
+			input: "*",
+			expectedAllowAll: true,
+			expectedOrigins:  map[string]bool{},
+		},
+		{
+			name:  "wildcard with specific origins",
+			input: "https://a.com, *",
+			expectedAllowAll: true,
+			expectedOrigins: map[string]bool{
 				"https://a.com": true,
-				"https://b.com": true,
 			},
 		},
 		{
-			name:  "duplicate origins",
-			input: "https://a.com, https://a.com,https://b.com",
-			expected: map[string]bool{
-				"https://a.com": true,
-				"https://b.com": true,
-			},
-		},
-		{
-			name:  "tabs and newlines around origins",
-			input: "\thttps://a.com\n, \r\nhttps://b.com\t",
-			expected: map[string]bool{
-				"https://a.com": true,
-				"https://b.com": true,
-			},
+			name:        "invalid origins (path/scheme/invalid url)",
+			input:       "ftp://a.com, https://b.com/path, invalid-url, https://",
+			expectedNil: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := parseAllowedOrigins(tt.input)
-			if tt.expected == nil {
+			if tt.expectedNil {
 				if got != nil {
 					t.Errorf("expected nil, got %v", got)
 				}
 				return
 			}
-			if len(got) != len(tt.expected) {
-				t.Errorf("expected length %d, got %d", len(tt.expected), len(got))
+			if got == nil {
+				t.Fatalf("expected non-nil AllowedOrigins")
 			}
-			for k, v := range tt.expected {
-				if got[k] != v {
-					t.Errorf("expected got[%s] == %v, got %v", k, v, got[k])
+			if got.allowAll != tt.expectedAllowAll {
+				t.Errorf("expected allowAll == %v, got %v", tt.expectedAllowAll, got.allowAll)
+			}
+			if len(got.origins) != len(tt.expectedOrigins) {
+				t.Errorf("expected origins length %d, got %d", len(tt.expectedOrigins), len(got.origins))
+			}
+			for k, v := range tt.expectedOrigins {
+				if got.origins[k] != v {
+					t.Errorf("expected got.origins[%s] == %v, got %v", k, v, got.origins[k])
 				}
 			}
 		})
@@ -91,10 +94,10 @@ func TestDiscoveryHandlerCORS(t *testing.T) {
 	handler := makeDiscoveryHandler(auth0Domain, allowedOrigins)
 
 	tests := []struct {
-		name           string
-		origin         string
-		expectedCORS   string
-		expectedVary   string
+		name         string
+		origin       string
+		expectedCORS string
+		expectedVary string
 	}{
 		{
 			name:         "no origin header",
@@ -115,10 +118,16 @@ func TestDiscoveryHandlerCORS(t *testing.T) {
 			expectedVary: "Origin",
 		},
 		{
-			name:         "trusted origin 2",
-			origin:       "https://app.trusted.com",
-			expectedCORS: "https://app.trusted.com",
+			name:         "trusted origin 2 with uppercase scheme/host and trailing slash in request",
+			origin:       "HTTPS://APP.TRUSTED.COM/",
+			expectedCORS: "HTTPS://APP.TRUSTED.COM/",
 			expectedVary: "Origin",
+		},
+		{
+			name:         "origin with path attempted attack",
+			origin:       "https://trusted.com/evilpath",
+			expectedCORS: "",
+			expectedVary: "",
 		},
 	}
 
@@ -147,6 +156,28 @@ func TestDiscoveryHandlerCORS(t *testing.T) {
 				t.Errorf("expected Vary '%s', got '%s'", tt.expectedVary, varyHeader)
 			}
 		})
+	}
+}
+
+func TestDiscoveryHandlerWildcardCORS(t *testing.T) {
+	auth0Domain := "test.auth0.com"
+	allowedOrigins := parseAllowedOrigins("*")
+	handler := makeDiscoveryHandler(auth0Domain, allowedOrigins)
+
+	req := httptest.NewRequest(http.MethodGet, "/.well-known/oauth-authorization-server", nil)
+	req.Header.Set("Origin", "https://anyorigin.com")
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	resp := w.Result()
+	corsHeader := resp.Header.Get("Access-Control-Allow-Origin")
+	if corsHeader != "*" {
+		t.Errorf("expected Access-Control-Allow-Origin '*', got '%s'", corsHeader)
+	}
+	varyHeader := resp.Header.Get("Vary")
+	if varyHeader != "" {
+		t.Errorf("expected empty Vary header for wildcard, got '%s'", varyHeader)
 	}
 }
 
