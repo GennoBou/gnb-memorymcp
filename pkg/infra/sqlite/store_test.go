@@ -563,6 +563,38 @@ func TestStore_All(t *testing.T) {
 				t.Errorf("Expected memories mem_02 and mem_04 in group, got %s and %s", id1, id2)
 			}
 		}
+
+		// Helper methods direct verification
+		t.Run("isSimilarCandidate", func(t *testing.T) {
+			meta1 := memoryMeta{
+				memory:  m2,
+				runeLen: 18,
+				biGrams: charBiGrams(m2.Content),
+			}
+			meta2 := memoryMeta{
+				memory:  m4,
+				runeLen: 22,
+				biGrams: charBiGrams(m4.Content),
+			}
+			if !store.isSimilarCandidate(meta1, meta2) {
+				t.Errorf("expected meta1 and meta2 to be similar candidates")
+			}
+
+			// Different length ratio skip test
+			metaShort := memoryMeta{
+				memory:  &domain.Memory{Content: "Short"},
+				runeLen: 5,
+				biGrams: charBiGrams("Short"),
+			}
+			metaLong := memoryMeta{
+				memory:  &domain.Memory{Content: "Very long content that far exceeds length ratio threshold relative to short content"},
+				runeLen: 80,
+				biGrams: charBiGrams("Very long content that far exceeds length ratio threshold relative to short content"),
+			}
+			if store.isSimilarCandidate(metaShort, metaLong) {
+				t.Errorf("expected metaShort and metaLong to be skipped due to length ratio threshold")
+			}
+		})
 	})
 }
 

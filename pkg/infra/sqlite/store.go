@@ -575,6 +575,81 @@ const (
 	defaultCleanupLimit  = 3
 )
 
+type memoryMeta struct {
+	memory  *domain.Memory
+	runeLen int
+	biGrams map[string]bool
+}
+
+func (s *Store) fetchCleanupCandidates(ctx context.Context) ([]memoryMeta, error) {
+	memories, err := s.List(ctx, domain.MemoryFilter{}, 1000)
+	if err != nil {
+		return nil, err
+	}
+
+	metas := make([]memoryMeta, len(memories))
+	for i, m := range memories {
+		metas[i] = memoryMeta{
+			memory:  m,
+			runeLen: utf8.RuneCountInString(m.Content),
+			biGrams: charBiGrams(m.Content),
+		}
+	}
+	return metas, nil
+}
+
+func (s *Store) isSimilarCandidate(meta1, meta2 memoryMeta) bool {
+	len1 := meta1.runeLen
+	len2 := meta2.runeLen
+	// 数学的に Jaccard 類似度が similarityThreshold 以上になり得ない長さの比を早期スキップ
+	if float64(len1) > float64(len2)*lengthRatioThreshold || float64(len2) > float64(len1)*lengthRatioThreshold {
+		return false
+	}
+	return jaccardSimilarityFromBiGrams(meta1.biGrams, meta2.biGrams) >= defaultSimilarityThreshold
+}
+
+func (s *Store) generateCleanupGroups(metas []memoryMeta) []*domain.CleanupGroup {
+	groupedIDs := make(map[string]bool)
+	var allGroups []*domain.CleanupGroup
+
+	for i := 0; i < len(metas); i++ {
+		meta1 := metas[i]
+		m1 := meta1.memory
+		if groupedIDs[m1.ID] {
+			continue
+		}
+
+		var currentGroup []*domain.Memory
+
+		for j := i + 1; j < len(metas); j++ {
+			meta2 := metas[j]
+			m2 := meta2.memory
+			if groupedIDs[m2.ID] {
+				continue
+			}
+
+			if s.isSimilarCandidate(meta1, meta2) {
+				if len(currentGroup) == 0 {
+					currentGroup = append(currentGroup, m1)
+					groupedIDs[m1.ID] = true
+				}
+				currentGroup = append(currentGroup, m2)
+				groupedIDs[m2.ID] = true
+			}
+		}
+
+		if len(currentGroup) > 0 {
+			groupID := fmt.Sprintf("group_%s", m1.ID)
+			allGroups = append(allGroups, &domain.CleanupGroup{
+				GroupID:  groupID,
+				Memories: currentGroup,
+			})
+		}
+	}
+
+	return allGroups
+}
+
 func (s *Store) GetCleanupCandidates(ctx context.Context, limit, offset int) ([]*domain.CleanupGroup, error) {
 	s.cacheMu.RLock()
 	if s.cacheValid {
@@ -593,79 +668,20 @@ func (s *Store) GetCleanupCandidates(ctx context.Context, limit, offset int) ([]
 		return paginateCleanupGroups(allGroups, limit, offset), nil
 	}
 
-	memories, err := s.List(ctx, domain.MemoryFilter{}, 1000)
+	metas, err := s.fetchCleanupCandidates(ctx)
 	if err != nil {
 		s.cacheMu.Unlock()
 		return nil, err
 	}
 
-	if len(memories) < 2 {
+	if len(metas) < 2 {
 		s.cachedGroup = nil
 		s.cacheValid = true
 		s.cacheMu.Unlock()
 		return nil, nil
 	}
 
-	type memoryMeta struct {
-		memory  *domain.Memory
-		runeLen int
-		biGrams map[string]bool
-	}
-
-	metas := make([]memoryMeta, len(memories))
-	for i, m := range memories {
-		metas[i] = memoryMeta{
-			memory:  m,
-			runeLen: utf8.RuneCountInString(m.Content),
-			biGrams: charBiGrams(m.Content),
-		}
-	}
-
-	groupedIDs := make(map[string]bool)
-	var allGroups []*domain.CleanupGroup
-
-	for i := 0; i < len(metas); i++ {
-		meta1 := metas[i]
-		m1 := meta1.memory
-		if groupedIDs[m1.ID] {
-			continue
-		}
-
-		var currentGroup []*domain.Memory
-		len1 := meta1.runeLen
-
-		for j := i + 1; j < len(metas); j++ {
-			meta2 := metas[j]
-			m2 := meta2.memory
-			if groupedIDs[m2.ID] {
-				continue
-			}
-
-			len2 := meta2.runeLen
-			// 数学的に Jaccard 類似度が similarityThreshold 以上になり得ない長さの比を早期スキップ
-			if float64(len1) > float64(len2)*lengthRatioThreshold || float64(len2) > float64(len1)*lengthRatioThreshold {
-				continue
-			}
-
-			sim := jaccardSimilarityFromBiGrams(meta1.biGrams, meta2.biGrams)
-			if sim >= defaultSimilarityThreshold {
-				if len(currentGroup) == 0 {
-					currentGroup = append(currentGroup, m1)
-					groupedIDs[m1.ID] = true
-				}
-				currentGroup = append(currentGroup, m2)
-				groupedIDs[m2.ID] = true
-			}
-		}
-
-		if len(currentGroup) > 0 {
-			groupID := fmt.Sprintf("group_%s", m1.ID)
-			allGroups = append(allGroups, &domain.CleanupGroup{
-				GroupID:  groupID,
-				Memories: currentGroup,
-			})
-		}
-	}
+	allGroups := s.generateCleanupGroups(metas)
 
 	s.cachedGroup = allGroups
 	s.cacheValid = true
