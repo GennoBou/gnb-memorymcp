@@ -59,6 +59,7 @@ func BenchmarkListCount(b *testing.B) {
 			SourceTool: "benchmark",
 			Importance: 3,
 			Tags:       []string{"benchmark", "test"},
+			Metadata:   map[string]interface{}{"index": i, "env": "bench"},
 		}
 		if err := store.Create(ctx, m); err != nil {
 			b.Fatalf("failed to create memory: %v", err)
@@ -94,6 +95,7 @@ func BenchmarkCount(b *testing.B) {
 			SourceTool: "benchmark",
 			Importance: 3,
 			Tags:       []string{"benchmark", "test"},
+			Metadata:   map[string]interface{}{"index": i, "env": "bench"},
 		}
 		if err := store.Create(ctx, m); err != nil {
 			b.Fatalf("failed to create memory: %v", err)
@@ -138,6 +140,7 @@ func setupBenchmarkStore(b *testing.B, numMemories int) (*Store, func()) {
 			Content:    fmt.Sprintf("This is memory item %d containing %s and %s for testing purposes.", i, kw1, kw2),
 			SourceTool: tool,
 			Tags:       []string{kw1, tool},
+			Metadata:   map[string]interface{}{"index": i, "category": kw1},
 			Importance: i % 10,
 		}
 		if err := store.Create(ctx, m); err != nil {
@@ -194,7 +197,7 @@ func BenchmarkSearch_LongQuery_3Char(b *testing.B) {
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		_, err := store.Search(ctx, "開発中", 10)
+		_, err := store.Search(ctx, "SQLite", 10)
 		if err != nil {
 			b.Fatalf("Search failed: %v", err)
 		}
