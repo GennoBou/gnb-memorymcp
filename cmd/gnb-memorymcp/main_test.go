@@ -41,14 +41,14 @@ func TestParseAllowedOrigins(t *testing.T) {
 			expectedNil: true,
 		},
 		{
-			name:  "wildcard origin",
-			input: "*",
+			name:             "wildcard origin",
+			input:            "*",
 			expectedAllowAll: true,
 			expectedOrigins:  map[string]bool{},
 		},
 		{
-			name:  "wildcard with specific origins",
-			input: "https://a.com, *",
+			name:             "wildcard with specific origins",
+			input:            "https://a.com, *",
 			expectedAllowAll: true,
 			expectedOrigins: map[string]bool{
 				"https://a.com": true,

@@ -68,16 +68,16 @@ func GetCIMDOAuthMetadata(mcpBaseURL string) OAuthMetadata {
 
 	return OAuthMetadata{
 		Issuer:                               mcpBaseURL,
-		AuthorizationEndpoint:               fmt.Sprintf("%s/authorize", mcpBaseURL),
-		TokenEndpoint:                       fmt.Sprintf("%s/token", mcpBaseURL),
-		UserinfoEndpoint:                    fmt.Sprintf("%s/userinfo", mcpBaseURL),
-		JwksURI:                             fmt.Sprintf("%s/.well-known/jwks.json", mcpBaseURL),
+		AuthorizationEndpoint:                fmt.Sprintf("%s/authorize", mcpBaseURL),
+		TokenEndpoint:                        fmt.Sprintf("%s/token", mcpBaseURL),
+		UserinfoEndpoint:                     fmt.Sprintf("%s/userinfo", mcpBaseURL),
+		JwksURI:                              fmt.Sprintf("%s/.well-known/jwks.json", mcpBaseURL),
 		RegistrationEndpoint:                 fmt.Sprintf("%s/register", mcpBaseURL),
-		ResponseTypesSupported:              []string{"code"},
-		GrantTypesSupported:                 []string{"authorization_code", "refresh_token"},
-		TokenEndpointAuthMethodsSupported:   []string{"none", "client_secret_basic", "client_secret_post"},
-		ScopesSupported:                     []string{"openid", "profile", "email", "offline_access", "mcp"},
-		CodeChallengeMethodsSupported:       []string{"S256", "plain"},
+		ResponseTypesSupported:               []string{"code"},
+		GrantTypesSupported:                  []string{"authorization_code", "refresh_token"},
+		TokenEndpointAuthMethodsSupported:    []string{"none", "client_secret_basic", "client_secret_post"},
+		ScopesSupported:                      []string{"openid", "profile", "email", "offline_access", "mcp"},
+		CodeChallengeMethodsSupported:        []string{"S256", "plain"},
 		TokenEndpointAuthSigningAlgSupported: []string{"RS256", "HS256"},
 	}
 }

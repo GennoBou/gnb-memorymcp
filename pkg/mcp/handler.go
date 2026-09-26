@@ -106,7 +106,7 @@ var defaultTools = []Tool{
 		Name:        "tags_list",
 		Description: "これまでに登録されたすべてのユニークなタグの一覧を取得します。表記ゆれの防止や、タグでの絞り込みの前に利用します。",
 		InputSchema: InputSchema{
-			Type: "object",
+			Type:       "object",
 			Properties: map[string]Property{},
 		},
 	},
@@ -141,7 +141,7 @@ var defaultTools = []Tool{
 		Name:        "memory_status",
 		Description: "記憶データベースの全体ステータス（総件数、最終整理日時、整理が必要な候補数など）を取得します。",
 		InputSchema: InputSchema{
-			Type: "object",
+			Type:       "object",
 			Properties: map[string]Property{},
 		},
 	},
@@ -160,7 +160,7 @@ var defaultTools = []Tool{
 		Name:        "memory_cleanup_complete",
 		Description: "記憶の整理・統合（クレンジング）作業が完了したことをシステムに記録し、最終整理日時を更新します。",
 		InputSchema: InputSchema{
-			Type: "object",
+			Type:       "object",
 			Properties: map[string]Property{},
 		},
 	},

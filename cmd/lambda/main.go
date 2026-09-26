@@ -317,7 +317,7 @@ func handleGETRequest(path string, headers map[string]string) events.APIGatewayV
 		"version":         "1.0.0",
 		"protocolVersion": "2025-11-25",
 		"status":          "ok",
-		"capabilities":   map[string]interface{}{"tools": map[string]interface{}{}},
+		"capabilities":    map[string]interface{}{"tools": map[string]interface{}{}},
 	}, map[string]string{
 		"Mcp-Protocol-Version": "2025-11-25",
 		"Mcp-Session-Id":       defaultSessionID,

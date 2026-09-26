@@ -246,4 +246,3 @@ func (v *CIMDBearerVerifier) VerifyToken(ctx context.Context, token string) erro
 	}
 	return ErrUnauthorized
 }
-

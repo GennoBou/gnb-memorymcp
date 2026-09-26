@@ -333,9 +333,9 @@ func TestBuildResponse(t *testing.T) {
 			},
 		},
 		{
-			name:         "CORSヘッダーおよびプロトコルバージョンヘッダーの統合結果の検証",
-			statusCode:   http.StatusOK,
-			body:         "",
+			name:       "CORSヘッダーおよびプロトコルバージョンヘッダーの統合結果の検証",
+			statusCode: http.StatusOK,
+			body:       "",
 			extraHeaders: map[string]string{
 				"Access-Control-Allow-Origin":  "https://example.com",
 				"Access-Control-Allow-Methods": "POST, GET, HEAD, OPTIONS",
@@ -670,4 +670,3 @@ func TestGetCORSHeaders(t *testing.T) {
 		})
 	}
 }
-

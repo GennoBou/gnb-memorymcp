@@ -11,21 +11,21 @@ import (
 )
 
 type mockMemoryStore struct {
-	memories       map[string]*domain.Memory
-	settings       map[string]string
-	cleanupGroup   []*domain.CleanupGroup
-	createErr      error
-	getErr         error
-	searchErr      error
-	listErr        error
-	countErr       error
-	countFunc      func(ctx context.Context) (int, error)
-	listTagsErr    error
-	updateErr      error
-	deleteErr      error
-	getSettingErr  error
-	setSettingErr  error
-	getCleanupErr  error
+	memories      map[string]*domain.Memory
+	settings      map[string]string
+	cleanupGroup  []*domain.CleanupGroup
+	createErr     error
+	getErr        error
+	searchErr     error
+	listErr       error
+	countErr      error
+	countFunc     func(ctx context.Context) (int, error)
+	listTagsErr   error
+	updateErr     error
+	deleteErr     error
+	getSettingErr error
+	setSettingErr error
+	getCleanupErr error
 }
 
 func newMockMemoryStore() *mockMemoryStore {
