@@ -2,7 +2,10 @@ package domain
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
+	"unicode/utf8"
 )
 
 // Memory は記憶データのドメインモデルです。
@@ -19,6 +22,61 @@ type Memory struct {
 	CreatedAt      time.Time              `json:"created_at"`
 	UpdatedAt      time.Time              `json:"updated_at"`
 	LastAccessed   *time.Time             `json:"last_accessed,omitempty"`
+}
+
+const (
+	// MaxContentLength はコンテンツの最大文字数（ルーン数）です。
+	MaxContentLength = 10000
+	// MaxTagsCount は付与できるタグの最大数です。
+	MaxTagsCount = 10
+	// MinImportance は重要度の最小値です。
+	MinImportance = 0
+	// MaxImportance は重要度の最大値です。
+	MaxImportance = 10
+)
+
+// Validate は Memory オブジェクトの整合性を検証します。
+func (m *Memory) Validate() error {
+	if m.Content == "" {
+		return errors.New("content is required")
+	}
+	if err := ValidateContentLength(m.Content); err != nil {
+		return err
+	}
+	if m.SourceTool == "" {
+		return errors.New("source_tool is required")
+	}
+	if err := ValidateTags(m.Tags); err != nil {
+		return err
+	}
+	if err := ValidateImportance(m.Importance); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ValidateContentLength はコンテンツの文字数が制限内かを検証します。
+func ValidateContentLength(content string) error {
+	if count := utf8.RuneCountInString(content); count > MaxContentLength {
+		return fmt.Errorf("content exceeds maximum length of %d characters (got %d)", MaxContentLength, count)
+	}
+	return nil
+}
+
+// ValidateTags はタグの個数が制限内かを検証します。
+func ValidateTags(tags []string) error {
+	if len(tags) > MaxTagsCount {
+		return fmt.Errorf("tags exceed maximum count of %d (got %d)", MaxTagsCount, len(tags))
+	}
+	return nil
+}
+
+// ValidateImportance は重要度が有効範囲内かを検証します。
+func ValidateImportance(importance int) error {
+	if importance < MinImportance || importance > MaxImportance {
+		return fmt.Errorf("importance must be between %d and %d (got %d)", MinImportance, MaxImportance, importance)
+	}
+	return nil
 }
 
 // MemoryFilter は一覧取得時の絞り込み条件です。

@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -562,6 +563,145 @@ func TestToolHandlers(t *testing.T) {
 		_, err := h.callTool(ctx, "unknown_tool", nil)
 		if err == nil || !strings.Contains(err.Error(), "unsupported tool: unknown_tool") {
 			t.Errorf("unexpected error for unsupported tool: %v", err)
+		}
+	})
+}
+
+func TestHandler_StoreErrorsAndEdgeCases(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("tools/call で Store.Create が DB エラーを返した場合", func(t *testing.T) {
+		store := newMockMemoryStore()
+		store.createErr = errors.New("db connection failure")
+		h := NewHandler(store)
+
+		req := &Request{
+			JSONRPC: "2.0",
+			ID:      1,
+			Method:  "tools/call",
+			Params:  json.RawMessage(`{"name":"memory_create","arguments":{"content":"test","source_tool":"cli"}}`),
+		}
+		resp := h.Handle(ctx, req)
+		if resp == nil {
+			t.Fatalf("expected non-nil response")
+		}
+		result, ok := resp.Result.(*CallToolResult)
+		if !ok {
+			t.Fatalf("expected *CallToolResult, got %T", resp.Result)
+		}
+		if !result.IsError {
+			t.Errorf("expected result.IsError to be true")
+		}
+		if len(result.Content) == 0 || !strings.Contains(result.Content[0].Text, "db connection failure") {
+			t.Errorf("expected error message to contain 'db connection failure', got %v", result.Content)
+		}
+	})
+
+	t.Run("tools/call で Store.Get が予期せぬ DB エラーを返した場合", func(t *testing.T) {
+		store := newMockMemoryStore()
+		store.getErr = errors.New("disk read error")
+		h := NewHandler(store)
+
+		req := &Request{
+			JSONRPC: "2.0",
+			ID:      2,
+			Method:  "tools/call",
+			Params:  json.RawMessage(`{"name":"memory_get","arguments":{"id":"mem_01"}}`),
+		}
+		resp := h.Handle(ctx, req)
+		if resp == nil {
+			t.Fatalf("expected non-nil response")
+		}
+		result, ok := resp.Result.(*CallToolResult)
+		if !ok {
+			t.Fatalf("expected *CallToolResult, got %T", resp.Result)
+		}
+		if !result.IsError {
+			t.Errorf("expected result.IsError to be true")
+		}
+		if len(result.Content) == 0 || !strings.Contains(result.Content[0].Text, "disk read error") {
+			t.Errorf("expected error message to contain 'disk read error', got %v", result.Content)
+		}
+	})
+
+	t.Run("tools/call で Store.Search が DB エラーを返した場合", func(t *testing.T) {
+		store := newMockMemoryStore()
+		store.searchErr = errors.New("fts index corruption")
+		h := NewHandler(store)
+
+		req := &Request{
+			JSONRPC: "2.0",
+			ID:      3,
+			Method:  "tools/call",
+			Params:  json.RawMessage(`{"name":"memory_search","arguments":{"query":"golang"}}`),
+		}
+		resp := h.Handle(ctx, req)
+		result, ok := resp.Result.(*CallToolResult)
+		if !ok || !result.IsError {
+			t.Errorf("expected error result for search failure")
+		}
+		if len(result.Content) == 0 || !strings.Contains(result.Content[0].Text, "fts index corruption") {
+			t.Errorf("expected error message to contain 'fts index corruption', got %v", result.Content)
+		}
+	})
+
+	t.Run("tools/call で Store.Update が ErrConflict (楽観ロック競合) を返した場合", func(t *testing.T) {
+		store := newMockMemoryStore()
+		_ = store.Create(ctx, &domain.Memory{ID: "mem_01", Content: "initial", SourceTool: "cli"})
+		store.updateErr = domain.ErrConflict
+		h := NewHandler(store)
+
+		req := &Request{
+			JSONRPC: "2.0",
+			ID:      4,
+			Method:  "tools/call",
+			Params:  json.RawMessage(`{"name":"memory_update","arguments":{"id":"mem_01","content":"updated"}}`),
+		}
+		resp := h.Handle(ctx, req)
+		result, ok := resp.Result.(*CallToolResult)
+		if !ok || !result.IsError {
+			t.Errorf("expected error result for conflict failure")
+		}
+		if len(result.Content) == 0 || !strings.Contains(result.Content[0].Text, "concurrent update conflict") {
+			t.Errorf("expected error message to contain 'concurrent update conflict', got %v", result.Content)
+		}
+	})
+
+	t.Run("tools/call で 不正な JSON の params が渡された場合 (CodeInvalidParams)", func(t *testing.T) {
+		store := newMockMemoryStore()
+		h := NewHandler(store)
+
+		req := &Request{
+			JSONRPC: "2.0",
+			ID:      5,
+			Method:  "tools/call",
+			Params:  json.RawMessage(`{not-json}`),
+		}
+		resp := h.Handle(ctx, req)
+		if resp == nil || resp.Error == nil {
+			t.Fatalf("expected error response")
+		}
+		if resp.Error.Code != CodeInvalidParams {
+			t.Errorf("expected CodeInvalidParams (%d), got %d", CodeInvalidParams, resp.Error.Code)
+		}
+	})
+
+	t.Run("未知の JSON-RPC メソッドが渡された場合 (CodeMethodNotFound)", func(t *testing.T) {
+		store := newMockMemoryStore()
+		h := NewHandler(store)
+
+		req := &Request{
+			JSONRPC: "2.0",
+			ID:      6,
+			Method:  "unsupported_method",
+			Params:  json.RawMessage(`{}`),
+		}
+		resp := h.Handle(ctx, req)
+		if resp == nil || resp.Error == nil {
+			t.Fatalf("expected error response")
+		}
+		if resp.Error.Code != CodeMethodNotFound {
+			t.Errorf("expected CodeMethodNotFound (%d), got %d", CodeMethodNotFound, resp.Error.Code)
 		}
 	})
 }

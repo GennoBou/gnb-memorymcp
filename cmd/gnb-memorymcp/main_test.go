@@ -4,93 +4,29 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/gennobou/gnb-memorymcp/pkg/cors"
 )
 
 func TestParseAllowedOrigins(t *testing.T) {
-	tests := []struct {
-		name             string
-		input            string
-		expectedNil      bool
-		expectedAllowAll bool
-		expectedOrigins  map[string]bool
-	}{
-		{
-			name:        "empty input",
-			input:       "",
-			expectedNil: true,
-		},
-		{
-			name:  "single origin",
-			input: "https://example.com",
-			expectedOrigins: map[string]bool{
-				"https://example.com": true,
-			},
-		},
-		{
-			name:  "multiple origins with spaces and normalization",
-			input: "HTTPS://EXAMPLE.COM/, http://localhost:3000, https://app.example.com ",
-			expectedOrigins: map[string]bool{
-				"https://example.com":     true,
-				"http://localhost:3000":   true,
-				"https://app.example.com": true,
-			},
-		},
-		{
-			name:        "only spaces and commas",
-			input:       "  , ,   ",
-			expectedNil: true,
-		},
-		{
-			name:             "wildcard origin",
-			input:            "*",
-			expectedAllowAll: true,
-			expectedOrigins:  map[string]bool{},
-		},
-		{
-			name:             "wildcard with specific origins",
-			input:            "https://a.com, *",
-			expectedAllowAll: true,
-			expectedOrigins: map[string]bool{
-				"https://a.com": true,
-			},
-		},
-		{
-			name:        "invalid origins (path/scheme/invalid url)",
-			input:       "ftp://a.com, https://b.com/path, invalid-url, https://",
-			expectedNil: true,
-		},
+	ao := cors.ParseAllowedOrigins("https://example.com, http://localhost:3000")
+	if ao == nil {
+		t.Fatalf("expected non-nil AllowedOrigins")
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := parseAllowedOrigins(tt.input)
-			if tt.expectedNil {
-				if got != nil {
-					t.Errorf("expected nil, got %v", got)
-				}
-				return
-			}
-			if got == nil {
-				t.Fatalf("expected non-nil AllowedOrigins")
-			}
-			if got.allowAll != tt.expectedAllowAll {
-				t.Errorf("expected allowAll == %v, got %v", tt.expectedAllowAll, got.allowAll)
-			}
-			if len(got.origins) != len(tt.expectedOrigins) {
-				t.Errorf("expected origins length %d, got %d", len(tt.expectedOrigins), len(got.origins))
-			}
-			for k, v := range tt.expectedOrigins {
-				if got.origins[k] != v {
-					t.Errorf("expected got.origins[%s] == %v, got %v", k, v, got.origins[k])
-				}
-			}
-		})
+	if allowed, _ := ao.CheckOrigin("https://example.com"); !allowed {
+		t.Errorf("expected https://example.com to be allowed")
+	}
+	if allowed, _ := ao.CheckOrigin("http://localhost:3000"); !allowed {
+		t.Errorf("expected http://localhost:3000 to be allowed")
+	}
+	if allowed, _ := ao.CheckOrigin("https://untrusted.com"); allowed {
+		t.Errorf("expected https://untrusted.com to not be allowed")
 	}
 }
 
 func TestDiscoveryHandlerCORS(t *testing.T) {
 	auth0Domain := "test.auth0.com"
-	allowedOrigins := parseAllowedOrigins("https://trusted.com,https://app.trusted.com")
+	allowedOrigins := cors.ParseAllowedOrigins("https://trusted.com,https://app.trusted.com")
 	handler := makeDiscoveryHandler(auth0Domain, allowedOrigins)
 
 	tests := []struct {
@@ -161,7 +97,7 @@ func TestDiscoveryHandlerCORS(t *testing.T) {
 
 func TestDiscoveryHandlerWildcardCORS(t *testing.T) {
 	auth0Domain := "test.auth0.com"
-	allowedOrigins := parseAllowedOrigins("*")
+	allowedOrigins := cors.ParseAllowedOrigins("*")
 	handler := makeDiscoveryHandler(auth0Domain, allowedOrigins)
 
 	req := httptest.NewRequest(http.MethodGet, "/.well-known/oauth-authorization-server", nil)

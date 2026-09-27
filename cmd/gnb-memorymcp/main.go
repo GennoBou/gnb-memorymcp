@@ -8,12 +8,11 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/gennobou/gnb-memorymcp/pkg/auth"
+	"github.com/gennobou/gnb-memorymcp/pkg/cors"
 	"github.com/gennobou/gnb-memorymcp/pkg/infra/sqlite"
 	"github.com/gennobou/gnb-memorymcp/pkg/mcp"
 )
@@ -135,7 +134,7 @@ func runHTTPServer(ctx context.Context, mcpHandler *mcp.Handler, host, port, api
 		auth0Domain = "gennobou.jp.auth0.com"
 	}
 
-	allowedOrigins := parseAllowedOrigins(allowedOriginsStr)
+	allowedOrigins := cors.ParseAllowedOrigins(allowedOriginsStr)
 
 	mux := http.NewServeMux()
 
@@ -146,6 +145,13 @@ func runHTTPServer(ctx context.Context, mcpHandler *mcp.Handler, host, port, api
 	mux.HandleFunc("/.well-known/openid-configuration", discoveryHandler)
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		allowedOrigins.ApplyHeaders(w, r)
+		if r.Method == http.MethodOptions {
+			w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -213,86 +219,7 @@ func validateAPIKey(apiKey, host string) error {
 	return nil
 }
 
-type AllowedOrigins struct {
-	allowAll bool
-	origins  map[string]bool
-}
-
-func parseAllowedOrigins(originsStr string) *AllowedOrigins {
-	if strings.TrimSpace(originsStr) == "" {
-		return nil
-	}
-	ao := &AllowedOrigins{
-		origins: make(map[string]bool),
-	}
-	for _, o := range strings.Split(originsStr, ",") {
-		normalized, ok := normalizeOrigin(o)
-		if !ok {
-			continue
-		}
-		if normalized == "*" {
-			ao.allowAll = true
-		} else {
-			ao.origins[normalized] = true
-		}
-	}
-	if !ao.allowAll && len(ao.origins) == 0 {
-		return nil
-	}
-	return ao
-}
-
-func normalizeOrigin(originStr string) (string, bool) {
-	trimmed := strings.TrimSpace(originStr)
-	if trimmed == "" {
-		return "", false
-	}
-	if trimmed == "*" {
-		return "*", true
-	}
-	u, err := url.Parse(trimmed)
-	if err != nil {
-		return "", false
-	}
-	scheme := strings.ToLower(u.Scheme)
-	if scheme != "http" && scheme != "https" {
-		return "", false
-	}
-	if u.Host == "" {
-		return "", false
-	}
-	if u.Path != "" && u.Path != "/" {
-		return "", false
-	}
-	if u.RawQuery != "" || u.Fragment != "" || u.User != nil {
-		return "", false
-	}
-	return scheme + "://" + strings.ToLower(u.Host), true
-}
-
-func setCORSHeaders(w http.ResponseWriter, r *http.Request, allowedOrigins *AllowedOrigins) {
-	if allowedOrigins == nil {
-		return
-	}
-	if allowedOrigins.allowAll {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		return
-	}
-	origin := r.Header.Get("Origin")
-	if origin == "" {
-		return
-	}
-	normalized, ok := normalizeOrigin(origin)
-	if !ok || normalized == "*" {
-		return
-	}
-	if allowedOrigins.origins[normalized] {
-		w.Header().Set("Access-Control-Allow-Origin", origin)
-		w.Header().Set("Vary", "Origin")
-	}
-}
-
-func makeDiscoveryHandler(auth0Domain string, allowedOrigins *AllowedOrigins) http.HandlerFunc {
+func makeDiscoveryHandler(auth0Domain string, allowedOrigins *cors.AllowedOrigins) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		metaJSON, err := auth.GetOAuthMetadataJSON(auth0Domain)
 		if err != nil {
@@ -300,7 +227,7 @@ func makeDiscoveryHandler(auth0Domain string, allowedOrigins *AllowedOrigins) ht
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		setCORSHeaders(w, r, allowedOrigins)
+		allowedOrigins.ApplyHeaders(w, r)
 		_, _ = w.Write(metaJSON)
 	}
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/gennobou/gnb-memorymcp/pkg/auth"
+	"github.com/gennobou/gnb-memorymcp/pkg/cors"
 	"github.com/gennobou/gnb-memorymcp/pkg/infra/sqlite"
 	"github.com/gennobou/gnb-memorymcp/pkg/mcp"
 )
@@ -125,30 +126,13 @@ func getHeaderValue(headers map[string]string, key string) string {
 }
 
 func getCORSHeaders(reqHeaders map[string]string) map[string]string {
-	res := map[string]string{}
 	origin := getHeaderValue(reqHeaders, "Origin")
-
 	allowedOriginsEnv := os.Getenv("ALLOWED_ORIGINS")
-	if allowedOriginsEnv == "" {
-		// If ALLOWED_ORIGINS is not explicitly configured, do not allow arbitrary origins.
-		return res
+	ao := cors.ParseAllowedOrigins(allowedOriginsEnv)
+	if ao == nil {
+		return map[string]string{}
 	}
-
-	origins := strings.Split(allowedOriginsEnv, ",")
-	for _, o := range origins {
-		o = strings.TrimSpace(o)
-		if o == "*" {
-			res["Access-Control-Allow-Origin"] = "*"
-			return res
-		}
-		if origin != "" && strings.EqualFold(o, origin) {
-			res["Access-Control-Allow-Origin"] = origin
-			res["Vary"] = "Origin"
-			return res
-		}
-	}
-
-	return res
+	return ao.GetCORSHeaders(origin)
 }
 
 func getBaseURL(headers map[string]string) string {

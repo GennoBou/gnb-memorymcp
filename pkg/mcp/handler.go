@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/gennobou/gnb-memorymcp/pkg/domain"
 	"github.com/oklog/ulid/v2"
@@ -269,24 +268,8 @@ func (h *Handler) handleMemoryCreate(ctx context.Context, argsJSON json.RawMessa
 	if err := json.Unmarshal(argsJSON, &args); err != nil {
 		return nil, fmt.Errorf("invalid arguments for memory_create: %w", err)
 	}
-	if args.Content == "" {
-		return nil, errors.New("content is required")
-	}
-	if utf8.RuneCountInString(args.Content) > 10000 {
-		return nil, fmt.Errorf("content exceeds maximum length of 10000 characters (got %d)", utf8.RuneCountInString(args.Content))
-	}
-	if args.SourceTool == "" {
-		return nil, errors.New("source_tool is required")
-	}
-	if len(args.Tags) > 10 {
-		return nil, fmt.Errorf("tags exceed maximum count of 10 (got %d)", len(args.Tags))
-	}
-	if args.Importance < 0 || args.Importance > 10 {
-		return nil, fmt.Errorf("importance must be between 0 and 10 (got %d)", args.Importance)
-	}
 
 	id := ulid.Make().String()
-
 	m := &domain.Memory{
 		ID:         id,
 		Content:    args.Content,
@@ -294,6 +277,10 @@ func (h *Handler) handleMemoryCreate(ctx context.Context, argsJSON json.RawMessa
 		Tags:       args.Tags,
 		Metadata:   args.Metadata,
 		Importance: args.Importance,
+	}
+
+	if err := m.Validate(); err != nil {
+		return nil, err
 	}
 
 	if err := h.store.Create(ctx, m); err != nil {
@@ -483,8 +470,8 @@ func (h *Handler) handleMemoryUpdate(ctx context.Context, argsJSON json.RawMessa
 
 func applyUpdateArgs(m *domain.Memory, args *UpdateArgs) error {
 	if args.Content != nil {
-		if utf8.RuneCountInString(*args.Content) > 10000 {
-			return fmt.Errorf("content exceeds maximum length of 10000 characters (got %d)", utf8.RuneCountInString(*args.Content))
+		if err := domain.ValidateContentLength(*args.Content); err != nil {
+			return err
 		}
 		m.Content = *args.Content
 	}
@@ -492,14 +479,14 @@ func applyUpdateArgs(m *domain.Memory, args *UpdateArgs) error {
 		m.SourceTool = *args.SourceTool
 	}
 	if args.Tags != nil {
-		if len(*args.Tags) > 10 {
-			return fmt.Errorf("tags exceed maximum count of 10 (got %d)", len(*args.Tags))
+		if err := domain.ValidateTags(*args.Tags); err != nil {
+			return err
 		}
 		m.Tags = *args.Tags
 	}
 	if args.Importance != nil {
-		if *args.Importance < 0 || *args.Importance > 10 {
-			return fmt.Errorf("importance must be between 0 and 10 (got %d)", *args.Importance)
+		if err := domain.ValidateImportance(*args.Importance); err != nil {
+			return err
 		}
 		m.Importance = *args.Importance
 	}

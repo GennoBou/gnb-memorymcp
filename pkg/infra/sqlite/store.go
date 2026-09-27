@@ -649,6 +649,14 @@ func (s *Store) generateCleanupGroups(metas []memoryMeta) []*domain.CleanupGroup
 	groupedIDs := make(map[string]bool)
 	var allGroups []*domain.CleanupGroup
 
+	// バイグラム -> そのバイグラムを持つメタデータのインデックス一覧（転置インデックス）
+	invertedIndex := make(map[string][]int)
+	for i, meta := range metas {
+		for bg := range meta.biGrams {
+			invertedIndex[bg] = append(invertedIndex[bg], i)
+		}
+	}
+
 	for i := 0; i < len(metas); i++ {
 		meta1 := metas[i]
 		m1 := meta1.memory
@@ -656,9 +664,30 @@ func (s *Store) generateCleanupGroups(metas []memoryMeta) []*domain.CleanupGroup
 			continue
 		}
 
+		// meta1 と少なくとも1つのバイグラムを共有する候補 j (> i) を収集
+		candidateMap := make(map[int]bool)
+		for bg := range meta1.biGrams {
+			for _, j := range invertedIndex[bg] {
+				if j > i && !groupedIDs[metas[j].memory.ID] {
+					candidateMap[j] = true
+				}
+			}
+		}
+
+		if len(candidateMap) == 0 {
+			continue
+		}
+
+		// 決定論的な評価順序を維持するため昇順ソート
+		candidates := make([]int, 0, len(candidateMap))
+		for j := range candidateMap {
+			candidates = append(candidates, j)
+		}
+		sort.Ints(candidates)
+
 		var currentGroup []*domain.Memory
 
-		for j := i + 1; j < len(metas); j++ {
+		for _, j := range candidates {
 			meta2 := metas[j]
 			m2 := meta2.memory
 			if groupedIDs[m2.ID] {
