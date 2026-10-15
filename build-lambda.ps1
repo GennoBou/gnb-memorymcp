@@ -21,12 +21,20 @@ if (Test-Path "$bootstrapPath.exe") {
 
 Write-Host "Building binary for AWS Lambda (GOOS=linux, GOARCH=amd64, CGO_ENABLED=0)..." -ForegroundColor Cyan
 
-# Run go build inside cmd.exe to ensure env vars are applied
-$buildCommand = 'set GOOS=linux&& set GOARCH=amd64&& set CGO_ENABLED=0&& go build -ldflags="-s -w" -o ' + $bootstrapPath + ' ./cmd/lambda/main.go'
-cmd.exe /c $buildCommand
+# Run go build with Linux target environment variables
+$oldGOOS = $env:GOOS
+$oldGOARCH = $env:GOARCH
+$oldCGO = $env:CGO_ENABLED
 
-if ($LastExitCode -ne 0) {
-    Write-Error "Error: go build failed with exit code $LastExitCode."
+try {
+    $env:GOOS = "linux"
+    $env:GOARCH = "amd64"
+    $env:CGO_ENABLED = "0"
+    go build -ldflags="-s -w" -o $bootstrapPath ./cmd/lambda/main.go
+} finally {
+    $env:GOOS = $oldGOOS
+    $env:GOARCH = $oldGOARCH
+    $env:CGO_ENABLED = $oldCGO
 }
 
 # Strict check for the generated binary
