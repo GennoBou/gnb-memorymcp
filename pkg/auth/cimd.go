@@ -1,14 +1,36 @@
 package auth
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
+
+const defaultTokenSecret = "gnb_memorymcp_default_secret_salt_2026"
+
+func getTokenSigningSecret() string {
+	if sec := os.Getenv("TOKEN_SECRET"); sec != "" {
+		return sec
+	}
+	if sec := os.Getenv("API_KEY"); sec != "" {
+		return sec
+	}
+	return defaultTokenSecret
+}
+
+func computeHMAC(secret, data string) string {
+	h := hmac.New(sha256.New, []byte(secret))
+	h.Write([]byte(data))
+	return hex.EncodeToString(h.Sum(nil))
+}
 
 // CodeStore は一時的な認可コードを保存するためのインメモリマップです
 type CodeStore struct {
@@ -38,20 +60,116 @@ func StoreCIMDToken(token string, expiry time.Duration) {
 	globalTokenStore.tokens[token] = time.Now().Add(expiry)
 }
 
-// ValidateCIMDToken は指定されたアクセストークンが有効（保存済みかつ未期限切れ）か検証します
-func ValidateCIMDToken(token string) bool {
-	globalTokenStore.mu.Lock()
-	defer globalTokenStore.mu.Unlock()
+// GenerateStatelessToken は HMAC 署名付きのステートレスなアクセストークンを生成します
+func GenerateStatelessToken(secret string, expiry time.Duration) (string, error) {
+	randHex, err := generateRandomHex(16)
+	if err != nil {
+		return "", err
+	}
+	expUnix := time.Now().Add(expiry).Unix()
+	payload := fmt.Sprintf("%s:%d", randHex, expUnix)
+	sig := computeHMAC(secret, payload)
+	return fmt.Sprintf("gnb_mcp_access_token_%s_%d_%s", randHex, expUnix, sig), nil
+}
 
+// GenerateStatelessCode は HMAC 署名付きのステートレスな認可コードを生成します
+func GenerateStatelessCode(secret string, expiry time.Duration) (string, error) {
+	randHex, err := generateRandomHex(16)
+	if err != nil {
+		return "", err
+	}
+	expUnix := time.Now().Add(expiry).Unix()
+	payload := fmt.Sprintf("%s:%d", randHex, expUnix)
+	sig := computeHMAC(secret, payload)
+	return fmt.Sprintf("gnb_code_%s_%d_%s", randHex, expUnix, sig), nil
+}
+
+// ValidateCIMDToken は指定されたアクセストークンが有効（インメモリまたはHMAC署名有効かつ未期限切れ）か検証します
+func ValidateCIMDToken(token string) bool {
+	if !strings.HasPrefix(token, "gnb_mcp_access_token_") {
+		return false
+	}
+
+	// 1. インメモリマップをチェック
+	globalTokenStore.mu.Lock()
 	exp, ok := globalTokenStore.tokens[token]
-	if !ok {
-		return false
-	}
-	if time.Now().After(exp) {
+	if ok {
+		if time.Now().Before(exp) {
+			globalTokenStore.mu.Unlock()
+			return true
+		}
 		delete(globalTokenStore.tokens, token)
+	}
+	globalTokenStore.mu.Unlock()
+
+	// 2. ステートレス署名検証 (gnb_mcp_access_token_<randHex>_<expUnix>_<sig>)
+	trimmed := strings.TrimPrefix(token, "gnb_mcp_access_token_")
+	parts := strings.Split(trimmed, "_")
+	if len(parts) == 3 {
+		randHex := parts[0]
+		expUnixStr := parts[1]
+		sigHex := parts[2]
+
+		expUnix, err := strconv.ParseInt(expUnixStr, 10, 64)
+		if err != nil {
+			return false
+		}
+
+		if time.Now().Unix() > expUnix {
+			return false // 期限切れ
+		}
+
+		secret := getTokenSigningSecret()
+		expectedSig := computeHMAC(secret, fmt.Sprintf("%s:%s", randHex, expUnixStr))
+		if hmac.Equal([]byte(sigHex), []byte(expectedSig)) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// ValidateCIMDCode は指定された認可コードが有効か検証します
+func ValidateCIMDCode(code string) bool {
+	if !strings.HasPrefix(code, "gnb_code_") {
 		return false
 	}
-	return true
+
+	globalCodeStore.mu.Lock()
+	exp, ok := globalCodeStore.codes[code]
+	if ok {
+		if time.Now().Before(exp) {
+			globalCodeStore.mu.Unlock()
+			return true
+		}
+		delete(globalCodeStore.codes, code)
+	}
+	globalCodeStore.mu.Unlock()
+
+	trimmed := strings.TrimPrefix(code, "gnb_code_")
+	parts := strings.Split(trimmed, "_")
+	if len(parts) == 3 {
+		randHex := parts[0]
+		expUnixStr := parts[1]
+		sigHex := parts[2]
+
+		expUnix, err := strconv.ParseInt(expUnixStr, 10, 64)
+		if err != nil {
+			return false
+		}
+
+		if time.Now().Unix() > expUnix {
+			return false
+		}
+
+		secret := getTokenSigningSecret()
+		expectedSig := computeHMAC(secret, fmt.Sprintf("%s:%s", randHex, expUnixStr))
+		if hmac.Equal([]byte(sigHex), []byte(expectedSig)) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func generateRandomHex(n int) (string, error) {
@@ -151,11 +269,11 @@ func GetCIMDOAuthMetadataJSON(mcpBaseURL string) ([]byte, error) {
 
 // BuildAuthorizeRedirectURL は /authorize リクエストから認可コードを生成してリダイレクト先 URL を組み立てます
 func BuildAuthorizeRedirectURL(redirectURI, state string) (string, error) {
-	codeHex, err := generateRandomHex(16)
+	secret := getTokenSigningSecret()
+	code, err := GenerateStatelessCode(secret, 10*time.Minute)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate authorization code: %w", err)
 	}
-	code := "gnb_code_" + codeHex
 	globalCodeStore.mu.Lock()
 	globalCodeStore.codes[code] = time.Now().Add(10 * time.Minute)
 	globalCodeStore.mu.Unlock()
@@ -176,18 +294,21 @@ type TokenResponse struct {
 }
 
 func IssueCIMDToken() ([]byte, error) {
-	accessTokenHex, err := generateRandomHex(24)
+	secret := getTokenSigningSecret()
+	expiresInSec := 3600 * 24 * 365 // 1 年間有効
+	expiry := time.Duration(expiresInSec) * time.Second
+
+	accessToken, err := GenerateStatelessToken(secret, expiry)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate access token: %w", err)
 	}
+
 	refreshTokenHex, err := generateRandomHex(24)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate refresh token: %w", err)
 	}
-	accessToken := "gnb_mcp_access_token_" + accessTokenHex
-	expiresInSec := 3600 * 24 * 365 // 1 年間有効
 
-	StoreCIMDToken(accessToken, time.Duration(expiresInSec)*time.Second)
+	StoreCIMDToken(accessToken, expiry)
 
 	tokenResp := TokenResponse{
 		AccessToken:  accessToken,
