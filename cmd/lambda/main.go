@@ -285,25 +285,27 @@ func handleAuthEndpoints(path string, queryParams map[string]string, bodyBytes [
 
 func handleGETRequest(path string, headers map[string]string) events.APIGatewayV2HTTPResponse {
 	acceptHeader := getHeaderValue(headers, "accept")
-	baseURL := getBaseURL(headers)
 
-	if path == "/sse" || (strings.Contains(acceptHeader, "text/event-stream") && !strings.Contains(acceptHeader, "application/json")) {
+	// MCP Streamable HTTP 仕様:
+	// ステートレスサーバー（Lambda 等）で Standalone SSE Stream を提供しない場合は
+	// GET (text/event-stream) や /sse に対して 405 Method Not Allowed (Allow: POST, GET, HEAD, OPTIONS) を返す
+	if path == "/sse" || strings.Contains(acceptHeader, "text/event-stream") {
 		cors := getCORSHeaders(headers)
-		cors["Content-Type"] = "text/event-stream"
-		cors["Cache-Control"] = "no-cache"
-		cors["Connection"] = "keep-alive"
-		cors["Access-Control-Allow-Headers"] = "*"
-		return buildResponse(http.StatusOK, fmt.Sprintf("event: endpoint\ndata: %s/\n\n", baseURL), cors)
+		cors["Allow"] = "POST, GET, HEAD, OPTIONS"
+		cors["Content-Type"] = "text/plain"
+		cors["Mcp-Protocol-Version"] = defaultProtocolVersion
+		cors["Access-Control-Expose-Headers"] = "Mcp-Protocol-Version, Allow"
+		return buildResponse(http.StatusMethodNotAllowed, "Standalone SSE stream not supported in stateless mode", cors)
 	}
 
 	return jsonResponse(headers, http.StatusOK, map[string]interface{}{
 		"name":            "GNB MemoryMCP",
 		"version":         "1.0.0",
-		"protocolVersion": "2025-11-25",
+		"protocolVersion": defaultProtocolVersion,
 		"status":          "ok",
 		"capabilities":    map[string]interface{}{"tools": map[string]interface{}{}},
 	}, map[string]string{
-		"Mcp-Protocol-Version": "2025-11-25",
+		"Mcp-Protocol-Version": defaultProtocolVersion,
 		"Mcp-Session-Id":       defaultSessionID,
 	})
 }

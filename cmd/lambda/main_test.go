@@ -670,3 +670,77 @@ func TestGetCORSHeaders(t *testing.T) {
 		})
 	}
 }
+
+func TestHandleGETRequest_ProtocolVersion(t *testing.T) {
+	resp := handleGETRequest("/", map[string]string{})
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, resp.StatusCode)
+	}
+
+	if pv, ok := resp.Headers["Mcp-Protocol-Version"]; !ok || pv != defaultProtocolVersion {
+		t.Errorf("expected Mcp-Protocol-Version header %q, got %q", defaultProtocolVersion, pv)
+	}
+
+	var body map[string]interface{}
+	if err := json.Unmarshal([]byte(resp.Body), &body); err != nil {
+		t.Fatalf("failed to unmarshal body: %v", err)
+	}
+
+	if body["protocolVersion"] != defaultProtocolVersion {
+		t.Errorf("expected body protocolVersion %q, got %v", defaultProtocolVersion, body["protocolVersion"])
+	}
+}
+
+func TestHandleGETRequest_MethodNotAllowedForSSE(t *testing.T) {
+	tests := []struct {
+		name       string
+		path       string
+		headers    map[string]string
+		wantStatus int
+	}{
+		{
+			name:       "/sse path should return 405 Method Not Allowed",
+			path:       "/sse",
+			headers:    map[string]string{},
+			wantStatus: http.StatusMethodNotAllowed,
+		},
+		{
+			name: "Accept text/event-stream on root should return 405 Method Not Allowed",
+			path: "/",
+			headers: map[string]string{
+				"accept": "text/event-stream",
+			},
+			wantStatus: http.StatusMethodNotAllowed,
+		},
+		{
+			name: "Accept text/event-stream mixed case should return 405 Method Not Allowed",
+			path: "/",
+			headers: map[string]string{
+				"Accept": "text/event-stream",
+			},
+			wantStatus: http.StatusMethodNotAllowed,
+		},
+		{
+			name: "Regular GET on root should return 200 OK",
+			path: "/",
+			headers: map[string]string{
+				"Accept": "application/json",
+			},
+			wantStatus: http.StatusOK,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := handleGETRequest(tt.path, tt.headers)
+			if resp.StatusCode != tt.wantStatus {
+				t.Errorf("handleGETRequest(%q) status = %d, want %d", tt.path, resp.StatusCode, tt.wantStatus)
+			}
+			if tt.wantStatus == http.StatusMethodNotAllowed {
+				if allow, ok := resp.Headers["Allow"]; !ok || allow == "" {
+					t.Errorf("expected Allow header on 405 response")
+				}
+			}
+		})
+	}
+}
