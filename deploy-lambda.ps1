@@ -7,6 +7,7 @@ param(
     [string]$DbUrl = "",
     [string]$DbToken = "",
     [string]$ApiKey = "",
+    [string]$Auth0ClientId = "",
     [string]$RoleArn = "",
     [string]$ConfigFile = ".\.env.json"
 )
@@ -25,6 +26,7 @@ if (Test-Path $ConfigFile) {
         if (-not $DbUrl -and $fileContent.DB_URL) { $DbUrl = $fileContent.DB_URL }
         if (-not $DbToken -and $fileContent.DB_TOKEN) { $DbToken = $fileContent.DB_TOKEN }
         if (-not $ApiKey -and $fileContent.API_KEY) { $ApiKey = $fileContent.API_KEY }
+        if (-not $Auth0ClientId -and $fileContent.AUTH0_CLIENT_ID) { $Auth0ClientId = $fileContent.AUTH0_CLIENT_ID }
         if (-not $RoleArn -and $fileContent.LAMBDA_ROLE_ARN) { $RoleArn = $fileContent.LAMBDA_ROLE_ARN }
     } catch {
         Write-Host "Warning: Failed to parse $ConfigFile as JSON. Checking line-based .env format..." -ForegroundColor Yellow
@@ -42,6 +44,7 @@ if (Test-Path $ConfigFile) {
             if (-not $DbUrl -and $k -eq "DB_URL") { $DbUrl = $v }
             if (-not $DbToken -and $k -eq "DB_TOKEN") { $DbToken = $v }
             if (-not $ApiKey -and $k -eq "API_KEY") { $ApiKey = $v }
+            if (-not $Auth0ClientId -and $k -eq "AUTH0_CLIENT_ID") { $Auth0ClientId = $v }
             if (-not $RoleArn -and $k -eq "LAMBDA_ROLE_ARN") { $RoleArn = $v }
         }
     }
@@ -53,6 +56,7 @@ if (-not $Region) { $Region = if ($env:REGION) { $env:REGION } else { "ap-northe
 if (-not $DbUrl) { $DbUrl = $env:DB_URL }
 if (-not $DbToken) { $DbToken = $env:DB_TOKEN }
 if (-not $ApiKey) { $ApiKey = $env:API_KEY }
+if (-not $Auth0ClientId) { $Auth0ClientId = $env:AUTH0_CLIENT_ID }
 if (-not $RoleArn) { $RoleArn = $env:LAMBDA_ROLE_ARN }
 
 Write-Host "Target Function: $FunctionName" -ForegroundColor Cyan
@@ -60,14 +64,18 @@ Write-Host "Target Region  : $Region" -ForegroundColor Cyan
 
 # Helper function to create temporary environment JSON file for AWS CLI (UTF-8 No BOM)
 function New-TempEnvJsonFile {
-    param([string]$url, [string]$token, [string]$key)
+    param([string]$url, [string]$token, [string]$key, [string]$auth0Cid)
     $tempPath = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "lambda-env-$([guid]::NewGuid().ToString()).json")
+    $vars = @{
+        DB_URL   = [string]$url
+        DB_TOKEN = [string]$token
+        API_KEY  = [string]$key
+    }
+    if ($auth0Cid) {
+        $vars["AUTH0_CLIENT_ID"] = [string]$auth0Cid
+    }
     $envHash = @{
-        Variables = @{
-            DB_URL   = [string]$url
-            DB_TOKEN = [string]$token
-            API_KEY  = [string]$key
-        }
+        Variables = $vars
     }
     $jsonString = $envHash | ConvertTo-Json -Compress
     $utf8NoBom = New-Object System.Text.UTF8Encoding $false
@@ -119,7 +127,7 @@ if ($functionExists) {
         aws lambda wait function-updated --function-name $FunctionName --region $Region
 
         Write-Host "Updating environment variables..." -ForegroundColor Cyan
-        $tempEnvFile = New-TempEnvJsonFile -url $DbUrl -token $DbToken -key $ApiKey
+        $tempEnvFile = New-TempEnvJsonFile -url $DbUrl -token $DbToken -key $ApiKey -auth0Cid $Auth0ClientId
         try {
             aws lambda update-function-configuration `
                 --function-name $FunctionName `
@@ -143,7 +151,7 @@ if ($functionExists) {
         exit 1
     }
 
-    $tempEnvFile = New-TempEnvJsonFile -url $DbUrl -token $DbToken -key $ApiKey
+    $tempEnvFile = New-TempEnvJsonFile -url $DbUrl -token $DbToken -key $ApiKey -auth0Cid $Auth0ClientId
     try {
         aws lambda create-function `
             --function-name $FunctionName `

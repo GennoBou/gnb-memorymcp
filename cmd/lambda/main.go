@@ -46,6 +46,9 @@ func initialize() {
 		auth0Domain = "gennobou.jp.auth0.com"
 	}
 	auth0ClientID = os.Getenv("AUTH0_CLIENT_ID")
+	if auth0ClientID == "" {
+		auth0ClientID = "vEgrzYVctbTISJRqdPTBZmpfu4qShq2G"
+	}
 
 	if dbURL == "" {
 		log.Fatalf("環境変数 DB_URL が設定されていません。")
