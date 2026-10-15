@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-lambda-go/events"
@@ -742,5 +744,91 @@ func TestHandleGETRequest_MethodNotAllowedForSSE(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestHandleAuthEndpoints_Auth0UniversalLogin(t *testing.T) {
+	// 保存して復元
+	oldClientID := auth0ClientID
+	oldDomain := auth0Domain
+	defer func() {
+		auth0ClientID = oldClientID
+		auth0Domain = oldDomain
+	}()
+
+	auth0ClientID = "vEgrzYVctbTISJRqdPTBZmpfu4qShq2G"
+	auth0Domain = "gennobou.jp.auth0.com"
+
+	// 1. /authorize リクエスト
+	queryParams := map[string]string{
+		"redirect_uri": "https://antigravity.google/oauth-callback",
+		"state":        "antigravity-state-xyz",
+	}
+	headers := map[string]string{
+		"host": "memory.gennobou.com",
+	}
+
+	resp, handled, err := handleAuthEndpoints("/authorize", queryParams, nil, headers)
+	if err != nil || !handled {
+		t.Fatalf("expected handled without error, got handled=%v, err=%v", handled, err)
+	}
+	if resp.StatusCode != http.StatusFound {
+		t.Fatalf("expected status %d, got %d", http.StatusFound, resp.StatusCode)
+	}
+
+	loc := resp.Headers["Location"]
+	if !strings.HasPrefix(loc, "https://gennobou.jp.auth0.com/authorize") {
+		t.Errorf("expected Auth0 authorize URL, got %q", loc)
+	}
+	if !strings.Contains(loc, "client_id=vEgrzYVctbTISJRqdPTBZmpfu4qShq2G") {
+		t.Errorf("expected client_id in URL, got %q", loc)
+	}
+	if !strings.Contains(loc, "redirect_uri=https%3A%2F%2Fmemory.gennobou.com%2Fcallback") {
+		t.Errorf("expected callback redirect_uri in URL, got %q", loc)
+	}
+
+	// 2. /callback リクエスト
+	// Auth0 URL からリレーされた state を抽出
+	u, err := url.Parse(loc)
+	if err != nil {
+		t.Fatalf("failed to parse redirect url: %v", err)
+	}
+	relayState := u.Query().Get("state")
+	if relayState == "" {
+		t.Fatalf("missing state in redirect url: %s", loc)
+	}
+
+	callbackParams := map[string]string{
+		"code":  "auth0_auth_code_12345",
+		"state": relayState,
+	}
+
+	cbResp, cbHandled, cbErr := handleAuthEndpoints("/callback", callbackParams, nil, headers)
+	if cbErr != nil || !cbHandled {
+		t.Fatalf("callback failed: cbHandled=%v, cbErr=%v", cbHandled, cbErr)
+	}
+	if cbResp.StatusCode != http.StatusFound {
+		t.Fatalf("expected callback status %d, got %d", http.StatusFound, cbResp.StatusCode)
+	}
+
+	cbLoc := cbResp.Headers["Location"]
+	if !strings.HasPrefix(cbLoc, "https://antigravity.google/oauth-callback") {
+		t.Errorf("expected redirect to Antigravity callback, got %q", cbLoc)
+	}
+	if !strings.Contains(cbLoc, "code=gnb_code_") {
+		t.Errorf("expected gnb_code_ in callback redirect, got %q", cbLoc)
+	}
+	if !strings.Contains(cbLoc, "state=antigravity-state-xyz") {
+		t.Errorf("expected original state in callback redirect, got %q", cbLoc)
+	}
+
+	// 3. /callback 異常系 (改ざんされた state)
+	badParams := map[string]string{
+		"code":  "auth0_auth_code_12345",
+		"state": relayState + "bad",
+	}
+	badResp, _, _ := handleAuthEndpoints("/callback", badParams, nil, headers)
+	if badResp.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected status %d for bad state, got %d", http.StatusBadRequest, badResp.StatusCode)
 	}
 }

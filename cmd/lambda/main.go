@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -20,10 +21,11 @@ import (
 )
 
 var (
-	mcpHandler  *mcp.Handler
-	apiKey      string
-	auth0Domain string
-	initOnce    sync.Once
+	mcpHandler    *mcp.Handler
+	apiKey        string
+	auth0Domain   string
+	auth0ClientID string
+	initOnce      sync.Once
 )
 
 const (
@@ -43,6 +45,7 @@ func initialize() {
 	if auth0Domain == "" {
 		auth0Domain = "gennobou.jp.auth0.com"
 	}
+	auth0ClientID = os.Getenv("AUTH0_CLIENT_ID")
 
 	if dbURL == "" {
 		log.Fatalf("環境変数 DB_URL が設定されていません。")
@@ -257,9 +260,51 @@ func handleAuthEndpoints(path string, queryParams map[string]string, bodyBytes [
 		if redirectURI == "" {
 			return errorResponse(headers, http.StatusBadRequest, "missing redirect_uri"), true, nil
 		}
+
+		// AUTH0_CLIENT_ID が設定されている場合は Auth0 Universal Login 画面へリダイレクト
+		if auth0ClientID != "" {
+			baseURL := getBaseURL(headers)
+			callbackURL := baseURL + "/callback"
+			relayState, err := auth.EncodeRelayState(redirectURI, state)
+			if err != nil {
+				return errorResponse(headers, http.StatusInternalServerError, "failed to encode relay state"), true, nil
+			}
+			auth0URL := fmt.Sprintf(
+				"https://%s/authorize?response_type=code&client_id=%s&redirect_uri=%s&scope=openid%%20profile%%20email&state=%s",
+				auth0Domain,
+				url.QueryEscape(auth0ClientID),
+				url.QueryEscape(callbackURL),
+				url.QueryEscape(relayState),
+			)
+			cors := getCORSHeaders(headers)
+			cors["Location"] = auth0URL
+			return buildResponse(http.StatusFound, "", cors), true, nil
+		}
+
 		targetURL, err := auth.BuildAuthorizeRedirectURL(redirectURI, state)
 		if err != nil {
 			return errorResponse(headers, http.StatusInternalServerError, "failed to generate authorize redirect url"), true, nil
+		}
+		cors := getCORSHeaders(headers)
+		cors["Location"] = targetURL
+		return buildResponse(http.StatusFound, "", cors), true, nil
+
+	case "/callback":
+		code := queryParams["code"]
+		state := queryParams["state"]
+		if code == "" {
+			return errorResponse(headers, http.StatusBadRequest, "missing auth0 code"), true, nil
+		}
+
+		origRedirectURI, origState, err := auth.DecodeRelayState(state)
+		if err != nil || origRedirectURI == "" {
+			return errorResponse(headers, http.StatusBadRequest, "invalid or expired state parameter"), true, nil
+		}
+
+		// ログイン成功を確認し、Antigravity のコールバック先へ認可コードを発行してリダイレクト
+		targetURL, err := auth.BuildAuthorizeRedirectURL(origRedirectURI, origState)
+		if err != nil {
+			return errorResponse(headers, http.StatusInternalServerError, "failed to generate redirect url"), true, nil
 		}
 		cors := getCORSHeaders(headers)
 		cors["Location"] = targetURL
