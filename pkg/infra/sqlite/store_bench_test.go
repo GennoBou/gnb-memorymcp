@@ -42,6 +42,26 @@ func BenchmarkGetCleanupCandidates(b *testing.B) {
 	}
 }
 
+func BenchmarkParseTagsJSON(b *testing.B) {
+	sample := `["Go","claude","benchmark","test","tag5"]`
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		var tags []string
+		_ = parseTagsJSON(sample, &tags)
+	}
+}
+
+func BenchmarkParseMetadataJSON(b *testing.B) {
+	sample := `{"category":"Go","index":123,"env":"bench"}`
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		var meta map[string]interface{}
+		_ = parseMetadataJSON(sample, &meta)
+	}
+}
+
 func BenchmarkGenerateCleanupGroups_Uncached(b *testing.B) {
 	ctx := context.Background()
 
