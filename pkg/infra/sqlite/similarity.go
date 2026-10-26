@@ -8,9 +8,17 @@ import (
 // normalizeString は類似度比較のために文字列を正規化します（小文字化、スペース・記号の除去）
 func normalizeString(s string) string {
 	var sb strings.Builder
-	for _, r := range strings.ToLower(s) {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+	sb.Grow(len(s))
+	for _, r := range s {
+		if ('a' <= r && r <= 'z') || ('0' <= r && r <= '9') {
 			sb.WriteRune(r)
+		} else if 'A' <= r && r <= 'Z' {
+			sb.WriteRune(r + ('a' - 'A'))
+		} else if r >= 0x80 {
+			rLower := unicode.ToLower(r)
+			if unicode.IsLetter(rLower) || unicode.IsDigit(rLower) {
+				sb.WriteRune(rLower)
+			}
 		}
 	}
 	return sb.String()
@@ -18,18 +26,62 @@ func normalizeString(s string) string {
 
 // charBiGrams は文字列から文字2-gram（バイグラム）を抽出します。
 func charBiGrams(s string) map[string]bool {
-	grams := make(map[string]bool)
 	normalized := normalizeString(s)
-	runes := []rune(normalized)
-	if len(runes) < 2 {
-		if len(runes) == 1 {
-			grams[string(runes[0])] = true
+	if normalized == "" {
+		return make(map[string]bool)
+	}
+
+	// ASCII 文字列か判定
+	isASCII := true
+	for i := 0; i < len(normalized); i++ {
+		if normalized[i] >= 0x80 {
+			isASCII = false
+			break
+		}
+	}
+
+	if isASCII {
+		n := len(normalized)
+		if n < 2 {
+			grams := make(map[string]bool, 1)
+			if n == 1 {
+				grams[normalized] = true
+			}
+			return grams
+		}
+		grams := make(map[string]bool, n-1)
+		for i := 0; i < n-1; i++ {
+			grams[normalized[i:i+2]] = true
 		}
 		return grams
 	}
-	for i := 0; i < len(runes)-1; i++ {
-		gram := string(runes[i : i+2])
-		grams[gram] = true
+
+	// Unicode (マルチバイト) 文字列の場合：各ルーンのバイト開始位置を収集
+	var buf [64]int
+	var offsets []int
+	if len(normalized)+1 <= len(buf) {
+		offsets = buf[:0]
+	} else {
+		offsets = make([]int, 0, len(normalized)+1)
+	}
+
+	for i := range normalized {
+		offsets = append(offsets, i)
+	}
+	offsets = append(offsets, len(normalized))
+
+	runeCount := len(offsets) - 1
+	if runeCount < 2 {
+		grams := make(map[string]bool, 1)
+		if runeCount == 1 {
+			grams[normalized] = true
+		}
+		return grams
+	}
+
+	grams := make(map[string]bool, runeCount-1)
+	for i := 0; i < runeCount-1; i++ {
+		grams[normalized[offsets[i]:offsets[i+2]]] = true
 	}
 	return grams
 }
