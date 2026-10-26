@@ -646,7 +646,12 @@ func (s *Store) isSimilarCandidate(meta1, meta2 memoryMeta) bool {
 }
 
 func (s *Store) generateCleanupGroups(metas []memoryMeta) []*domain.CleanupGroup {
-	groupedIDs := make(map[string]bool)
+	n := len(metas)
+	if n < 2 {
+		return nil
+	}
+
+	grouped := make([]bool, n)
 	var allGroups []*domain.CleanupGroup
 
 	// バイグラム -> そのバイグラムを持つメタデータのインデックス一覧（転置インデックス）
@@ -657,50 +662,67 @@ func (s *Store) generateCleanupGroups(metas []memoryMeta) []*domain.CleanupGroup
 		}
 	}
 
-	for i := 0; i < len(metas); i++ {
-		meta1 := metas[i]
-		m1 := meta1.memory
-		if groupedIDs[m1.ID] {
+	commonCounts := make([]int, n)
+	candidateIndices := make([]int, 0, n)
+
+	for i := 0; i < n; i++ {
+		if grouped[i] {
 			continue
 		}
 
+		meta1 := metas[i]
+		m1 := meta1.memory
+		bgCount1 := len(meta1.biGrams)
+		len1 := meta1.runeLen
+
 		// meta1 と少なくとも1つのバイグラムを共有する候補 j (> i) を収集
-		candidateMap := make(map[int]bool)
+		candidateIndices = candidateIndices[:0]
 		for bg := range meta1.biGrams {
 			for _, j := range invertedIndex[bg] {
-				if j > i && !groupedIDs[metas[j].memory.ID] {
-					candidateMap[j] = true
+				if j > i && !grouped[j] {
+					if commonCounts[j] == 0 {
+						candidateIndices = append(candidateIndices, j)
+					}
+					commonCounts[j]++
 				}
 			}
 		}
 
-		if len(candidateMap) == 0 {
+		if len(candidateIndices) == 0 {
 			continue
 		}
 
 		// 決定論的な評価順序を維持するため昇順ソート
-		candidates := make([]int, 0, len(candidateMap))
-		for j := range candidateMap {
-			candidates = append(candidates, j)
-		}
-		sort.Ints(candidates)
+		sort.Ints(candidateIndices)
 
 		var currentGroup []*domain.Memory
 
-		for _, j := range candidates {
-			meta2 := metas[j]
-			m2 := meta2.memory
-			if groupedIDs[m2.ID] {
+		for _, j := range candidateIndices {
+			common := commonCounts[j]
+			commonCounts[j] = 0
+
+			if grouped[j] {
 				continue
 			}
 
-			if s.isSimilarCandidate(meta1, meta2) {
+			meta2 := metas[j]
+			len2 := meta2.runeLen
+
+			// 1. 長さの比による早期スキップ
+			if float64(len1) > float64(len2)*lengthRatioThreshold || float64(len2) > float64(len1)*lengthRatioThreshold {
+				continue
+			}
+
+			// 2. Jaccard 類似度チェック
+			bgCount2 := len(meta2.biGrams)
+			union := bgCount1 + bgCount2 - common
+			if union > 0 && float64(common)/float64(union) >= defaultSimilarityThreshold {
 				if len(currentGroup) == 0 {
 					currentGroup = append(currentGroup, m1)
-					groupedIDs[m1.ID] = true
+					grouped[i] = true
 				}
-				currentGroup = append(currentGroup, m2)
-				groupedIDs[m2.ID] = true
+				currentGroup = append(currentGroup, meta2.memory)
+				grouped[j] = true
 			}
 		}
 
