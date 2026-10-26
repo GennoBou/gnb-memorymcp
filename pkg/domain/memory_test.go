@@ -123,14 +123,101 @@ func TestMemory_Validate(t *testing.T) {
 	}
 }
 
+func TestValidateContentLength(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name:    "空文字列 (0文字)",
+			content: "",
+			wantErr: false,
+		},
+		{
+			name:    "1文字の半角英字",
+			content: "a",
+			wantErr: false,
+		},
+		{
+			name:    "1文字のマルチバイト文字 (日本語)",
+			content: "あ",
+			wantErr: false,
+		},
+		{
+			name:    "1文字の絵文字",
+			content: "😀",
+			wantErr: false,
+		},
+		{
+			name:    "境界値未満: 9999文字 (半角英字)",
+			content: strings.Repeat("a", 9999),
+			wantErr: false,
+		},
+		{
+			name:    "境界値: 10000文字 (MaxContentLength - 半角英字)",
+			content: strings.Repeat("a", 10000),
+			wantErr: false,
+		},
+		{
+			name:    "境界値超過: 10001文字 (半角英字)",
+			content: strings.Repeat("a", 10001),
+			wantErr: true,
+			errMsg:  "content exceeds maximum length of 10000 characters (got 10001)",
+		},
+		{
+			name:    "境界値: 10000ルーン (マルチバイト日本語)",
+			content: strings.Repeat("あ", 10000),
+			wantErr: false,
+		},
+		{
+			name:    "境界値超過: 10001ルーン (マルチバイト日本語)",
+			content: strings.Repeat("あ", 10001),
+			wantErr: true,
+			errMsg:  "content exceeds maximum length of 10000 characters (got 10001)",
+		},
+		{
+			name:    "境界値: 10000ルーン (絵文字)",
+			content: strings.Repeat("😀", 10000),
+			wantErr: false,
+		},
+		{
+			name:    "境界値超過: 10001ルーン (絵文字)",
+			content: strings.Repeat("😀", 10001),
+			wantErr: true,
+			errMsg:  "content exceeds maximum length of 10000 characters (got 10001)",
+		},
+		{
+			name:    "境界値: 10000ルーン (混在: 英数字、日本語、絵文字)",
+			content: strings.Repeat("aあ😀", 3333) + "a",
+			wantErr: false,
+		},
+		{
+			name:    "境界値超過: 10001ルーン (混在: 英数字、日本語、絵文字)",
+			content: strings.Repeat("aあ😀", 3333) + "aあ",
+			wantErr: true,
+			errMsg:  "content exceeds maximum length of 10000 characters (got 10001)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateContentLength(tt.content)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("ValidateContentLength() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErr && tt.errMsg != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.errMsg) {
+					t.Errorf("ValidateContentLength() error message %q does not contain %q", err, tt.errMsg)
+				}
+			}
+		})
+	}
+}
+
 func TestValidateIndividualHelpers(t *testing.T) {
-	// ValidateContentLength
-	if err := ValidateContentLength(strings.Repeat("x", 10000)); err != nil {
-		t.Errorf("ValidateContentLength(10000) returned unexpected error: %v", err)
-	}
-	if err := ValidateContentLength(strings.Repeat("x", 10001)); err == nil {
-		t.Errorf("ValidateContentLength(10001) expected error, got nil")
-	}
+	// ValidateContentLength は TestValidateContentLength で詳細に検証済み
 
 	// ValidateTags
 	if err := ValidateTags(make([]string, 10)); err != nil {
