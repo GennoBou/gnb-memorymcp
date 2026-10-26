@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+	"unsafe"
 
 	"github.com/gennobou/gnb-memorymcp/pkg/domain"
 	_ "github.com/tursodatabase/libsql-client-go/libsql"
@@ -29,6 +30,71 @@ type Store struct {
 	cacheValid  bool
 }
 
+func stringToBytes(s string) []byte {
+	return unsafe.Slice(unsafe.StringData(s), len(s))
+}
+
+func tryParseTagsFast(s string) ([]string, bool) {
+	s = strings.TrimSpace(s)
+	if len(s) < 2 || s[0] != '[' || s[len(s)-1] != ']' {
+		return nil, false
+	}
+	content := strings.TrimSpace(s[1 : len(s)-1])
+	if content == "" {
+		return []string{}, true
+	}
+
+	res := make([]string, 0, 4)
+	i := 0
+	n := len(content)
+
+	for i < n {
+		for i < n && (content[i] == ' ' || content[i] == '\t' || content[i] == '\n' || content[i] == '\r') {
+			i++
+		}
+		if i >= n {
+			break
+		}
+
+		if content[i] != '"' {
+			return nil, false
+		}
+		i++
+		start := i
+		for i < n && content[i] != '"' {
+			c := content[i]
+			if c == '\\' || c < 0x20 {
+				return nil, false
+			}
+			i++
+		}
+		if i >= n {
+			return nil, false
+		}
+		res = append(res, content[start:i])
+		i++
+
+		for i < n && (content[i] == ' ' || content[i] == '\t' || content[i] == '\n' || content[i] == '\r') {
+			i++
+		}
+		if i < n {
+			if content[i] == ',' {
+				i++
+				for i < n && (content[i] == ' ' || content[i] == '\t' || content[i] == '\n' || content[i] == '\r') {
+					i++
+				}
+				if i >= n {
+					return nil, false
+				}
+			} else {
+				return nil, false
+			}
+		}
+	}
+
+	return res, true
+}
+
 // parseTagsJSON parses JSON formatted tags with fast-path checks for empty slice/null.
 func parseTagsJSON(s string, target *[]string) error {
 	if s == "" || s == "null" {
@@ -38,7 +104,11 @@ func parseTagsJSON(s string, target *[]string) error {
 		*target = []string{}
 		return nil
 	}
-	return json.Unmarshal([]byte(s), target)
+	if tags, ok := tryParseTagsFast(s); ok {
+		*target = tags
+		return nil
+	}
+	return json.Unmarshal(stringToBytes(s), target)
 }
 
 // parseMetadataJSON parses JSON formatted metadata with fast-path checks for empty map/null.
@@ -50,7 +120,7 @@ func parseMetadataJSON(s string, target *map[string]interface{}) error {
 		*target = map[string]interface{}{}
 		return nil
 	}
-	return json.Unmarshal([]byte(s), target)
+	return json.Unmarshal(stringToBytes(s), target)
 }
 
 // NewStore は新しい Store インスタンスを作成し、スキーマを適用（マイグレーション）します。
