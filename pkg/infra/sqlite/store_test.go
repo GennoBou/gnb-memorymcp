@@ -434,6 +434,64 @@ func TestStore_All(t *testing.T) {
 		}
 	})
 
+	t.Run("List Sorting and Fallback", func(t *testing.T) {
+		store := newTestStore(t)
+
+		m1 := &domain.Memory{
+			ID:         "mem_sort_01",
+			Content:    "Memory 1",
+			SourceTool: "tool",
+			Importance: 1,
+		}
+		m2 := &domain.Memory{
+			ID:         "mem_sort_02",
+			Content:    "Memory 2",
+			SourceTool: "tool",
+			Importance: 10,
+		}
+
+		if err := store.Create(ctx, m1); err != nil {
+			t.Fatalf("Create m1 failed: %v", err)
+		}
+		if err := store.Create(ctx, m2); err != nil {
+			t.Fatalf("Create m2 failed: %v", err)
+		}
+
+		// importance ASC テスト (m1 -> m2)
+		listImpASC, err := store.List(ctx, domain.MemoryFilter{SortBy: "importance", Order: "ASC"}, 10)
+		if err != nil {
+			t.Fatalf("List importance ASC failed: %v", err)
+		}
+		if len(listImpASC) != 2 || listImpASC[0].ID != m1.ID || listImpASC[1].ID != m2.ID {
+			t.Errorf("List importance ASC mismatch: got IDs [%s, %s], want [%s, %s]",
+				listImpASC[0].ID, listImpASC[1].ID, m1.ID, m2.ID)
+		}
+
+		// importance DESC テスト (m2 -> m1)
+		listImpDESC, err := store.List(ctx, domain.MemoryFilter{SortBy: "importance", Order: "DESC"}, 10)
+		if err != nil {
+			t.Fatalf("List importance DESC failed: %v", err)
+		}
+		if len(listImpDESC) != 2 || listImpDESC[0].ID != m2.ID || listImpDESC[1].ID != m1.ID {
+			t.Errorf("List importance DESC mismatch: got IDs [%s, %s], want [%s, %s]",
+				listImpDESC[0].ID, listImpDESC[1].ID, m2.ID, m1.ID)
+		}
+
+		// 不正な SortBy や Order (SQL インジェクション試行文字列等) 指定時にデフォルト (created_at DESC) へフォールバックされることの確認
+		listInvalid, err := store.List(ctx, domain.MemoryFilter{
+			SortBy: "importance; DROP TABLE memories; --",
+			Order:  "INVALID' OR '1'='1",
+		}, 10)
+		if err != nil {
+			t.Fatalf("List with invalid/malicious parameters failed: %v", err)
+		}
+		// 作成順 (m2 が後に作成されたため created_at DESC では m2 -> m1)
+		if len(listInvalid) != 2 || listInvalid[0].ID != m2.ID || listInvalid[1].ID != m1.ID {
+			t.Errorf("List invalid fallback mismatch: got IDs [%s, %s], want [%s, %s]",
+				listInvalid[0].ID, listInvalid[1].ID, m2.ID, m1.ID)
+		}
+	})
+
 	t.Run("ListTags", func(t *testing.T) {
 		store := newTestStore(t)
 
