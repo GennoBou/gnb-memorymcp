@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -16,21 +17,39 @@ func TestExtractBearerToken(t *testing.T) {
 		wantToken  string
 		wantErr    bool
 	}{
-		{"Valid Bearer Header", "Bearer my-secret-token", "my-secret-token", false},
-		{"Case insensitive prefix", "bearer my-secret-token", "my-secret-token", false},
-		{"Missing header", "", "", true},
-		{"Invalid format", "Basic username:password", "", true},
-		{"Empty token", "Bearer ", "", true},
+		{"Valid Bearer header", "Bearer my-secret-token", "my-secret-token", false},
+		{"Lowercase prefix", "bearer my-secret-token", "my-secret-token", false},
+		{"Uppercase prefix", "BEARER my-secret-token", "my-secret-token", false},
+		{"Mixed case prefix", "BeArEr my-secret-token", "my-secret-token", false},
+		{"Empty header", "", "", true},
+		{"Whitespace only header", "   ", "", true},
+		{"Basic auth header", "Basic username:password", "", true},
+		{"Digest auth header", "Digest abcdef", "", true},
+		{"Bearer prefix only without trailing space", "Bearer", "", true},
+		{"Bearer prefix with trailing space only", "Bearer ", "", true},
+		{"Multiple spaces between Bearer and token", "Bearer  token", "", true},
+		{"Extra space-separated parts", "Bearer token extra", "", true},
+		{"Tab separated Bearer and token", "Bearer\ttoken", "", true},
+		{"Token only without scheme", "my-secret-token", "", true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			token, err := ExtractBearerToken(tt.authHeader)
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("ExtractBearerToken() error = %v, wantErr %v", err, tt.wantErr)
-			}
-			if token != tt.wantToken {
-				t.Errorf("ExtractBearerToken() got = %v, want %v", token, tt.wantToken)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("ExtractBearerToken(%q) expected error, got nil", tt.authHeader)
+				}
+				if !errors.Is(err, ErrUnauthorized) {
+					t.Errorf("ExtractBearerToken(%q) error = %v, want %v", tt.authHeader, err, ErrUnauthorized)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("ExtractBearerToken(%q) unexpected error = %v", tt.authHeader, err)
+				}
+				if token != tt.wantToken {
+					t.Errorf("ExtractBearerToken(%q) got = %q, want %q", tt.authHeader, token, tt.wantToken)
+				}
 			}
 		})
 	}
