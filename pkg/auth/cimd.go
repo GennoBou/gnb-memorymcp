@@ -14,7 +14,21 @@ import (
 	"time"
 )
 
-const defaultTokenSecret = "gnb_memorymcp_default_secret_salt_2026"
+var (
+	generatedSecret     string
+	generatedSecretOnce sync.Once
+)
+
+func getGeneratedSecret() string {
+	generatedSecretOnce.Do(func() {
+		sec, err := generateRandomHex(32)
+		if err != nil {
+			panic("failed to generate random token signing secret: " + err.Error())
+		}
+		generatedSecret = sec
+	})
+	return generatedSecret
+}
 
 func getTokenSigningSecret() string {
 	if sec := os.Getenv("TOKEN_SECRET"); sec != "" {
@@ -23,7 +37,7 @@ func getTokenSigningSecret() string {
 	if sec := os.Getenv("API_KEY"); sec != "" {
 		return sec
 	}
-	return defaultTokenSecret
+	return getGeneratedSecret()
 }
 
 func computeHMAC(secret, data string) string {
