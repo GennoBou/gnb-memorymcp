@@ -7,7 +7,42 @@ import (
 	"time"
 )
 
+func TestGetTokenSigningSecret(t *testing.T) {
+	t.Run("with TOKEN_SECRET env", func(t *testing.T) {
+		t.Setenv("TOKEN_SECRET", "custom-token-secret")
+		t.Setenv("API_KEY", "custom-api-key")
+		if sec := getTokenSigningSecret(); sec != "custom-token-secret" {
+			t.Errorf("expected custom-token-secret, got %s", sec)
+		}
+	})
+
+	t.Run("with API_KEY env fallback", func(t *testing.T) {
+		t.Setenv("TOKEN_SECRET", "")
+		t.Setenv("API_KEY", "custom-api-key")
+		if sec := getTokenSigningSecret(); sec != "custom-api-key" {
+			t.Errorf("expected custom-api-key, got %s", sec)
+		}
+	})
+
+	t.Run("without env vars uses dynamic generated secret", func(t *testing.T) {
+		t.Setenv("TOKEN_SECRET", "")
+		t.Setenv("API_KEY", "")
+		sec1 := getTokenSigningSecret()
+		if sec1 == "" {
+			t.Fatal("expected non-empty dynamic secret")
+		}
+		if sec1 == "gnb_memorymcp_default_secret_salt_2026" {
+			t.Fatal("secret should not be the hardcoded default secret")
+		}
+		sec2 := getTokenSigningSecret()
+		if sec1 != sec2 {
+			t.Errorf("expected consistent generated secret within same process lifetime, got %s and %s", sec1, sec2)
+		}
+	})
+}
+
 func TestCIMDOAuthMetadata(t *testing.T) {
+	t.Setenv("TOKEN_SECRET", "test-secret-key")
 	baseURL := "https://oajuohz4tofchqb4hy62yzq65m0paryw.lambda-url.ap-northeast-3.on.aws"
 	meta := GetCIMDOAuthMetadata(baseURL)
 
@@ -78,6 +113,7 @@ func TestIssueDCRRegistrationResponse(t *testing.T) {
 }
 
 func TestCIMDStatelessTokenValidation(t *testing.T) {
+	t.Setenv("TOKEN_SECRET", "test-secret-key")
 	tokenBytes, err := IssueCIMDToken()
 	if err != nil {
 		t.Fatalf("failed to issue CIMD token: %v", err)
@@ -116,6 +152,7 @@ func TestCIMDStatelessTokenValidation(t *testing.T) {
 }
 
 func TestCIMDStatelessCodeValidation(t *testing.T) {
+	t.Setenv("TOKEN_SECRET", "test-secret-key")
 	secret := getTokenSigningSecret()
 	code, err := GenerateStatelessCode(secret, 10*time.Minute)
 	if err != nil {
