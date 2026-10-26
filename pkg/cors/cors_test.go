@@ -184,27 +184,59 @@ func TestApplyHeaders(t *testing.T) {
 
 func TestGetCORSHeaders(t *testing.T) {
 	ao := ParseAllowedOrigins("https://example.com")
-	headers := ao.GetCORSHeaders("https://example.com")
-	if headers["Access-Control-Allow-Origin"] != "https://example.com" {
-		t.Errorf("GetCORSHeaders() = %v, want Access-Control-Allow-Origin: https://example.com", headers)
-	}
-	if headers["Vary"] != "Origin" {
-		t.Errorf("GetCORSHeaders() = %v, want Vary: Origin", headers)
-	}
-
-	// 不許可オリジン
-	unauthorized := ao.GetCORSHeaders("https://attacker.com")
-	if len(unauthorized) != 0 {
-		t.Errorf("GetCORSHeaders() for unauthorized origin returned %v, want empty map", unauthorized)
-	}
-
-	// ワイルドカードの場合
 	aoWildcard := ParseAllowedOrigins("*")
-	wildcardHeaders := aoWildcard.GetCORSHeaders("https://anywhere.com")
-	if wildcardHeaders["Access-Control-Allow-Origin"] != "*" {
-		t.Errorf("GetCORSHeaders() for wildcard = %v, want '*'", wildcardHeaders)
+	var nilAo *AllowedOrigins
+
+	tests := []struct {
+		name        string
+		ao          *AllowedOrigins
+		origin      string
+		wantHeaders map[string]string
+	}{
+		{
+			name:        "許可されたオリジン",
+			ao:          ao,
+			origin:      "https://example.com",
+			wantHeaders: map[string]string{"Access-Control-Allow-Origin": "https://example.com", "Vary": "Origin"},
+		},
+		{
+			name:        "未許可のオリジン",
+			ao:          ao,
+			origin:      "https://attacker.com",
+			wantHeaders: map[string]string{},
+		},
+		{
+			name:        "ワイルドカードオリジン",
+			ao:          aoWildcard,
+			origin:      "https://anywhere.com",
+			wantHeaders: map[string]string{"Access-Control-Allow-Origin": "*"},
+		},
+		{
+			name:        "空文字オリジン",
+			ao:          ao,
+			origin:      "",
+			wantHeaders: map[string]string{},
+		},
+		{
+			name:        "nil AllowedOrigins レシーバ",
+			ao:          nilAo,
+			origin:      "https://example.com",
+			wantHeaders: map[string]string{},
+		},
 	}
-	if _, ok := wildcardHeaders["Vary"]; ok {
-		t.Errorf("GetCORSHeaders() for wildcard should not have Vary header")
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.ao.GetCORSHeaders(tt.origin)
+			if len(got) != len(tt.wantHeaders) {
+				t.Errorf("GetCORSHeaders() len = %d, want %d (got: %v, want: %v)", len(got), len(tt.wantHeaders), got, tt.wantHeaders)
+				return
+			}
+			for k, v := range tt.wantHeaders {
+				if got[k] != v {
+					t.Errorf("GetCORSHeaders()[%q] = %q, want %q", k, got[k], v)
+				}
+			}
+		})
 	}
 }
