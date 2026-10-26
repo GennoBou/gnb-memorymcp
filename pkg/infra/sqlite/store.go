@@ -474,25 +474,36 @@ func (s *Store) List(ctx context.Context, filter domain.MemoryFilter, limit int)
 		whereClause = "WHERE " + strings.Join(conditions, " AND ")
 	}
 
-	// ソートキーとソート順の決定 (SQLインジェクション防止のためのバリデーション)
-	sortBy := "created_at"
+	// ソートキーとソート順の決定 (SQLインジェクション防止のため安全な定数句を選択)
+	var orderByClause string
 	switch strings.ToLower(filter.SortBy) {
-	case "created_at", "updated_at", "importance":
-		sortBy = strings.ToLower(filter.SortBy)
-	}
-
-	order := "DESC"
-	if strings.ToUpper(filter.Order) == "ASC" {
-		order = "ASC"
+	case "updated_at":
+		if strings.ToUpper(filter.Order) == "ASC" {
+			orderByClause = "ORDER BY updated_at ASC"
+		} else {
+			orderByClause = "ORDER BY updated_at DESC"
+		}
+	case "importance":
+		if strings.ToUpper(filter.Order) == "ASC" {
+			orderByClause = "ORDER BY importance ASC"
+		} else {
+			orderByClause = "ORDER BY importance DESC"
+		}
+	default: // "created_at" またはその他不正値
+		if strings.ToUpper(filter.Order) == "ASC" {
+			orderByClause = "ORDER BY created_at ASC"
+		} else {
+			orderByClause = "ORDER BY created_at DESC"
+		}
 	}
 
 	sqlQuery := fmt.Sprintf(`
 		SELECT id, content, source_tool, tags, metadata, importance, embedding_model, version, created_at, updated_at, last_accessed
 		FROM memories
 		%s
-		ORDER BY %s %s
+		%s
 		LIMIT ? OFFSET ?
-	`, whereClause, sortBy, order)
+	`, whereClause, orderByClause)
 	args = append(args, limit, filter.Offset)
 
 	rows, err := s.db.QueryContext(ctx, sqlQuery, args...)
