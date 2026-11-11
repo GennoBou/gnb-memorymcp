@@ -22,16 +22,17 @@ import (
 
 var (
 	mcpHandler    *mcp.Handler
-	apiKey        string
 	auth0Domain   string
 	auth0ClientID string
+	allowedHost   string
 	initOnce      sync.Once
 )
 
 const (
 	defaultProtocolVersion = "2026-07-28"
 	defaultSessionID       = "session_gnb_memorymcp_active"
-	fallbackLambdaURL      = "https://oajuohz4tofchqb4hy62yzq65m0paryw.lambda-url.ap-northeast-3.on.aws"
+	defaultAllowedHost     = "memory.gennobou.com"
+	fallbackLambdaURL      = "https://memory.gennobou.com"
 )
 
 func initialize() {
@@ -40,7 +41,6 @@ func initialize() {
 
 	dbURL := os.Getenv("DB_URL")
 	dbToken := os.Getenv("DB_TOKEN")
-	apiKey = os.Getenv("API_KEY")
 	auth0Domain = os.Getenv("AUTH0_DOMAIN")
 	if auth0Domain == "" {
 		auth0Domain = "gennobou.jp.auth0.com"
@@ -49,13 +49,13 @@ func initialize() {
 	if auth0ClientID == "" {
 		auth0ClientID = "vEgrzYVctbTISJRqdPTBZmpfu4qShq2G"
 	}
+	allowedHost = os.Getenv("ALLOWED_HOST")
+	if allowedHost == "" {
+		allowedHost = defaultAllowedHost
+	}
 
 	if dbURL == "" {
 		log.Fatalf("環境変数 DB_URL が設定されていません。")
-	}
-
-	if apiKey == "" {
-		log.Fatalf("環境変数 API_KEY が設定されていません。")
 	}
 
 	// Turso (libsql) データベースへの接続初期化
@@ -68,9 +68,37 @@ func initialize() {
 	log.Println("AWS Lambda 用エントリーポイントの初期化が完了しました。")
 }
 
+// isAllowedHost はリクエストの Host が許可されたドメイン（memory.gennobou.com）かを検証します
+func isAllowedHost(headers map[string]string) bool {
+	if allowedHost == "SKIP_HOST_CHECK" {
+		return true
+	}
+	expectedHost := allowedHost
+	if expectedHost == "" {
+		expectedHost = defaultAllowedHost
+	}
+	host := getHeaderValue(headers, "host")
+	if host == "" {
+		host = getHeaderValue(headers, "x-forwarded-host")
+	}
+	if host == "" {
+		return false
+	}
+	if idx := strings.Index(host, ":"); idx != -1 {
+		host = host[:idx]
+	}
+	return strings.EqualFold(host, expectedHost)
+}
+
 // HandleRequest は AWS Lambda への Function URL / API Gateway HTTP API からのリクエストを処理します
 func HandleRequest(ctx context.Context, req events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
 	initOnce.Do(initialize)
+
+	// 0. Host 検証（memory.gennobou.com 以外のアクセスを 403 Forbidden で拒絶）
+	if !isAllowedHost(req.Headers) {
+		log.Printf("[WARN] Forbidden access from unauthorized host: %s", getHeaderValue(req.Headers, "host"))
+		return errorResponse(req.Headers, http.StatusForbidden, "Forbidden: Invalid host"), nil
+	}
 
 	path := req.RawPath
 	if path == "" {
@@ -234,17 +262,18 @@ func handleDiscoveryEndpoints(path string, headers map[string]string) (events.AP
 		}, map[string]string{"Mcp-Protocol-Version": defaultProtocolVersion}), true, nil
 
 	case "/.well-known/oauth-authorization-server", "/.well-known/openid-configuration":
-		metaJSON, err := auth.GetCIMDOAuthMetadataJSON(baseURL)
+		metaJSON, err := auth.GetOAuthMetadataJSON(auth0Domain)
 		if err != nil {
 			return errorResponse(headers, http.StatusInternalServerError, "failed to generate oauth metadata"), true, nil
 		}
 		return jsonResponse(headers, http.StatusOK, metaJSON, nil), true, nil
 
 	case "/.well-known/oauth-protected-resource":
+		authServer := fmt.Sprintf("https://%s", strings.TrimSuffix(strings.TrimPrefix(auth0Domain, "https://"), "/"))
 		meta := map[string]interface{}{
 			"resource":              baseURL,
-			"authorization_servers": []string{baseURL},
-			"scopes_supported":      []string{"mcp", "openid"},
+			"authorization_servers": []string{authServer},
+			"scopes_supported":      []string{"mcp", "openid", "profile", "email"},
 		}
 		return jsonResponse(headers, http.StatusOK, meta, nil), true, nil
 
@@ -317,18 +346,10 @@ func handleAuthEndpoints(path string, queryParams map[string]string, bodyBytes [
 		return buildResponse(http.StatusFound, "", cors), true, nil
 
 	case "/token":
-		tokenJSON, err := auth.IssueCIMDToken()
-		if err != nil {
-			return errorResponse(headers, http.StatusInternalServerError, "failed to issue token"), true, nil
-		}
-		return jsonResponse(headers, http.StatusOK, tokenJSON, nil), true, nil
+		return errorResponse(headers, http.StatusNotFound, "token endpoint is managed by Auth0 (https://"+auth0Domain+"/oauth/token)"), true, nil
 
 	case "/register":
-		dcrJSON, err := auth.IssueDCRRegistrationResponse(bodyBytes)
-		if err != nil {
-			return errorResponse(headers, http.StatusInternalServerError, "failed to issue dcr client"), true, nil
-		}
-		return jsonResponse(headers, http.StatusCreated, dcrJSON, nil), true, nil
+		return errorResponse(headers, http.StatusNotFound, "dynamic client registration is not supported"), true, nil
 	}
 
 	return events.APIGatewayV2HTTPResponse{}, false, nil
@@ -403,10 +424,8 @@ func handleMCPRequest(ctx context.Context, path string, headers map[string]strin
 	}
 
 	verifier := auth.NewMultiVerifier(
-		auth.NewApiKeyVerifier(apiKey),
-		auth.NewAuth0UserInfoVerifier(auth0Domain),
 		auth.NewJWTBearerVerifier(auth0Domain),
-		auth.NewCIMDBearerVerifier(),
+		auth.NewAuth0UserInfoVerifier(auth0Domain),
 	)
 	if err := verifier.VerifyToken(ctx, token); err != nil {
 		log.Printf("[DEBUG] VerifyToken error: %v", err)

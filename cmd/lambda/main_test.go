@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"reflect"
 	"strings"
@@ -15,8 +16,22 @@ import (
 )
 
 func TestHandleRequest_AuthenticationAndRouting(t *testing.T) {
-	// テスト用のグローバル変数設定
-	apiKey = "test-secret-key"
+	// モック Auth0 サーバー（/userinfo）
+	auth0Mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/userinfo" {
+			authHeader := r.Header.Get("Authorization")
+			if strings.HasPrefix(authHeader, "Bearer ey") {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"sub":"auth0|12345","name":"Test User"}`))
+				return
+			}
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer auth0Mock.Close()
+
+	auth0Domain = strings.TrimPrefix(auth0Mock.URL, "http://")
+	allowedHost = "memory.gennobou.com"
 
 	// メモリ内 SQLite を使用して mcpHandler を初期化
 	store, err := sqlite.NewStore("file::memory:", "")
@@ -26,14 +41,26 @@ func TestHandleRequest_AuthenticationAndRouting(t *testing.T) {
 	defer store.Close()
 	mcpHandler = mcp.NewHandler(store)
 
-	// initializeOnce を済ませておく（環境変数チェックをスキップ）
 	initOnce.Do(func() {})
-
 	ctx := context.Background()
 
-	// 1. Authorizationヘッダーなし
+	// 0. 不正なホスト（403 Forbidden）
+	badHostReq := events.APIGatewayV2HTTPRequest{
+		Headers: map[string]string{"host": "unauthorized-url.aws.com"},
+		Body:    `{"jsonrpc":"2.0","method":"initialize","id":1}`,
+	}
+	badHostResp, err := HandleRequest(ctx, badHostReq)
+	if err != nil {
+		t.Fatalf("HandleRequest failed: %v", err)
+	}
+	if badHostResp.StatusCode != http.StatusForbidden {
+		t.Errorf("expected status %d for unauthorized host, got %d", http.StatusForbidden, badHostResp.StatusCode)
+	}
+
+	// 1. Authorizationヘッダーなし（initialize は未認証でも 200 OK）
 	req := events.APIGatewayV2HTTPRequest{
-		Body: `{"jsonrpc":"2.0","method":"initialize","id":1}`,
+		Headers: map[string]string{"host": "memory.gennobou.com"},
+		Body:    `{"jsonrpc":"2.0","method":"initialize","id":1}`,
 	}
 	resp, err := HandleRequest(ctx, req)
 	if err != nil {
@@ -43,9 +70,10 @@ func TestHandleRequest_AuthenticationAndRouting(t *testing.T) {
 		t.Errorf("expected status %d, got %d", http.StatusOK, resp.StatusCode)
 	}
 
-	// 2. 無効なAPIキー (tools/list メソッドで検証)
+	// 2. 無効なトークン (tools/list メソッドで検証 -> 401 Unauthorized)
 	req.Body = `{"jsonrpc":"2.0","method":"tools/list","id":2}`
 	req.Headers = map[string]string{
+		"host":          "memory.gennobou.com",
 		"Authorization": "Bearer wrong-key",
 	}
 	resp, err = HandleRequest(ctx, req)
@@ -56,9 +84,11 @@ func TestHandleRequest_AuthenticationAndRouting(t *testing.T) {
 		t.Errorf("expected status %d, got %d", http.StatusUnauthorized, resp.StatusCode)
 	}
 
-	// 3. 有効なAPIキー、かつ正常なリクエスト
+	// 3. 有効な Auth0 トークン、かつ正常なリクエスト
+	validJWT := "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature"
 	req.Headers = map[string]string{
-		"Authorization": "Bearer test-secret-key",
+		"host":          "memory.gennobou.com",
+		"Authorization": "Bearer " + validJWT,
 	}
 	resp, err = HandleRequest(ctx, req)
 	if err != nil {
@@ -77,9 +107,10 @@ func TestHandleRequest_AuthenticationAndRouting(t *testing.T) {
 		t.Errorf("unexpected mcp error: %v", mcpResp.Error)
 	}
 
-	// 4. 有効なAPIキー、かつJSON-RPCパースエラー
+	// 4. 有効な Auth0 トークン、かつJSON-RPCパースエラー
 	req.Headers = map[string]string{
-		"Authorization": "Bearer test-secret-key",
+		"host":          "memory.gennobou.com",
+		"Authorization": "Bearer " + validJWT,
 	}
 	req.Body = `{"invalid-json`
 	resp, err = HandleRequest(ctx, req)
@@ -100,6 +131,7 @@ func TestHandleRequest_AuthenticationAndRouting(t *testing.T) {
 }
 
 func TestHandleRequest_CORS(t *testing.T) {
+	allowedHost = "SKIP_HOST_CHECK"
 	ctx := context.Background()
 
 	t.Run("OPTIONS request with Origin when ALLOWED_ORIGINS is unset", func(t *testing.T) {
@@ -855,5 +887,90 @@ func TestAuthorizeInvalidRedirectURI(t *testing.T) {
 		if resp.StatusCode != http.StatusBadRequest {
 			t.Errorf("expected status 400 for invalid redirect_uri %q, got %d", uri, resp.StatusCode)
 		}
+	}
+}
+
+func TestHandleDiscoveryEndpoints_Auth0(t *testing.T) {
+	oldDomain := auth0Domain
+	defer func() { auth0Domain = oldDomain }()
+	auth0Domain = "gennobou.jp.auth0.com"
+
+	headers := map[string]string{"host": "memory.gennobou.com"}
+	resp, handled, err := handleDiscoveryEndpoints("/.well-known/oauth-authorization-server", headers)
+	if err != nil || !handled {
+		t.Fatalf("expected handled without error, got handled=%v, err=%v", handled, err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected status 200, got %d", resp.StatusCode)
+	}
+
+	var meta map[string]interface{}
+	if err := json.Unmarshal([]byte(resp.Body), &meta); err != nil {
+		t.Fatalf("failed to parse discovery metadata: %v", err)
+	}
+	if meta["issuer"] != "https://gennobou.jp.auth0.com/" {
+		t.Errorf("expected Auth0 issuer, got %v", meta["issuer"])
+	}
+	if meta["token_endpoint"] != "https://gennobou.jp.auth0.com/oauth/token" {
+		t.Errorf("expected Auth0 token endpoint, got %v", meta["token_endpoint"])
+	}
+}
+
+func TestHandleRequest_HostProtection(t *testing.T) {
+	oldHost := allowedHost
+	defer func() { allowedHost = oldHost }()
+	allowedHost = "memory.gennobou.com"
+
+	store, err := sqlite.NewStore("file::memory:", "")
+	if err != nil {
+		t.Fatalf("failed to initialize store: %v", err)
+	}
+	defer store.Close()
+	mcpHandler = mcp.NewHandler(store)
+	initOnce.Do(func() {})
+
+	ctx := context.Background()
+
+	testCases := []struct {
+		name       string
+		host       string
+		wantStatus int
+	}{
+		{"Allowed host", "memory.gennobou.com", http.StatusOK},
+		{"Allowed host with port", "memory.gennobou.com:443", http.StatusOK},
+		{"Direct Lambda URL rejected", "oajuohz4tofchqb4hy62yzq65m0paryw.lambda-url.ap-northeast-3.on.aws", http.StatusForbidden},
+		{"Attacker domain rejected", "evil-site.com", http.StatusForbidden},
+		{"Empty host rejected", "", http.StatusForbidden},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			headers := map[string]string{}
+			if tc.host != "" {
+				headers["host"] = tc.host
+			}
+			req := events.APIGatewayV2HTTPRequest{
+				Headers: headers,
+				Body:    `{"jsonrpc":"2.0","method":"initialize","id":1}`,
+			}
+			resp, err := HandleRequest(ctx, req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if resp.StatusCode != tc.wantStatus {
+				t.Errorf("host %q: expected status %d, got %d", tc.host, tc.wantStatus, resp.StatusCode)
+			}
+		})
+	}
+}
+
+func TestHandleAuthEndpoints_TokenEndpointDisabled(t *testing.T) {
+	headers := map[string]string{"host": "memory.gennobou.com"}
+	resp, handled, err := handleAuthEndpoints("/token", nil, nil, headers)
+	if err != nil || !handled {
+		t.Fatalf("expected handled without error, got handled=%v, err=%v", handled, err)
+	}
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("expected status 404 for disabled /token, got %d", resp.StatusCode)
 	}
 }
