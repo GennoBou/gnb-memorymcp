@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"net"
@@ -32,9 +33,9 @@ func NewApiKeyVerifier(expectedKey string) *ApiKeyVerifier {
 	return &ApiKeyVerifier{expectedKey: expectedKey}
 }
 
-// VerifyToken は入力されたトークンが期待される API キーと一致するか検証します
+// VerifyToken は入力されたトークンが期待される API キーと一致するか検証します（タイミング攻撃対策済み）
 func (v *ApiKeyVerifier) VerifyToken(ctx context.Context, token string) error {
-	if v.expectedKey == "" || token != v.expectedKey {
+	if v.expectedKey == "" || subtle.ConstantTimeCompare([]byte(token), []byte(v.expectedKey)) != 1 {
 		return ErrUnauthorized
 	}
 	return nil

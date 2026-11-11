@@ -832,3 +832,28 @@ func TestHandleAuthEndpoints_Auth0UniversalLogin(t *testing.T) {
 		t.Errorf("expected status %d for bad state, got %d", http.StatusBadRequest, badResp.StatusCode)
 	}
 }
+
+func TestAuthorizeInvalidRedirectURI(t *testing.T) {
+	headers := map[string]string{"host": "memory.gennobou.com"}
+	invalidURIs := []string{
+		"/relative/path",
+		"javascript:alert(1)",
+		"https://example.com/callback#fragment",
+		"ftp://example.com/callback",
+		"",
+	}
+
+	for _, uri := range invalidURIs {
+		queryParams := map[string]string{
+			"redirect_uri": uri,
+			"state":        "xyz",
+		}
+		resp, handled, err := handleAuthEndpoints("/authorize", queryParams, nil, headers)
+		if err != nil || !handled {
+			t.Fatalf("expected handled without error for uri %q, got handled=%v, err=%v", uri, handled, err)
+		}
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("expected status 400 for invalid redirect_uri %q, got %d", uri, resp.StatusCode)
+		}
+	}
+}

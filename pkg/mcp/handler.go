@@ -177,62 +177,74 @@ func (h *Handler) Handle(ctx context.Context, req *Request) *Response {
 		return nil
 
 	case "initialize":
-		protoVer := ProtocolVersion
-		if len(req.Params) > 0 {
-			var p struct {
-				ProtocolVersion string `json:"protocolVersion"`
-			}
-			if err := json.Unmarshal(req.Params, &p); err == nil && p.ProtocolVersion != "" {
-				protoVer = p.ProtocolVersion
-			}
-		}
-
-		return &Response{
-			JSONRPC: "2.0",
-			Result: map[string]interface{}{
-				"protocolVersion": protoVer,
-				"capabilities": map[string]interface{}{
-					"tools": map[string]interface{}{},
-				},
-				"serverInfo": map[string]string{
-					"name":    "GNB MemoryMCP",
-					"version": "1.0.0",
-				},
-			},
-			ID: req.ID,
-		}
+		return h.handleInitialize(req)
 
 	case "tools/list":
-		result := h.listTools()
-		return &Response{
-			JSONRPC: "2.0",
-			Result:  result,
-			ID:      req.ID,
-		}
+		return h.handleToolsList(req)
 
 	case "tools/call":
-		var params CallToolParams
-		if err := json.Unmarshal(req.Params, &params); err != nil {
-			return NewErrorResponse(req.ID, CodeInvalidParams, "failed to unmarshal params")
-		}
-
-		result, err := h.callTool(ctx, params.Name, params.Arguments)
-		if err != nil {
-			return &Response{
-				JSONRPC: "2.0",
-				Result:  NewErrorResult(fmt.Sprintf("Error: %v", err)),
-				ID:      req.ID,
-			}
-		}
-
-		return &Response{
-			JSONRPC: "2.0",
-			Result:  result,
-			ID:      req.ID,
-		}
+		return h.handleToolsCall(ctx, req)
 
 	default:
 		return NewErrorResponse(req.ID, CodeMethodNotFound, fmt.Sprintf("method not found: %s", req.Method))
+	}
+}
+
+func (h *Handler) handleInitialize(req *Request) *Response {
+	protoVer := ProtocolVersion
+	if len(req.Params) > 0 {
+		var p struct {
+			ProtocolVersion string `json:"protocolVersion"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err == nil && p.ProtocolVersion != "" {
+			protoVer = p.ProtocolVersion
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		Result: map[string]interface{}{
+			"protocolVersion": protoVer,
+			"capabilities": map[string]interface{}{
+				"tools": map[string]interface{}{},
+			},
+			"serverInfo": map[string]string{
+				"name":    "GNB MemoryMCP",
+				"version": "1.0.0",
+			},
+		},
+		ID: req.ID,
+	}
+}
+
+func (h *Handler) handleToolsList(req *Request) *Response {
+	result := h.listTools()
+	return &Response{
+		JSONRPC: "2.0",
+		Result:  result,
+		ID:      req.ID,
+	}
+}
+
+func (h *Handler) handleToolsCall(ctx context.Context, req *Request) *Response {
+	var params CallToolParams
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return NewErrorResponse(req.ID, CodeInvalidParams, "failed to unmarshal params")
+	}
+
+	result, err := h.callTool(ctx, params.Name, params.Arguments)
+	if err != nil {
+		return &Response{
+			JSONRPC: "2.0",
+			Result:  NewErrorResult(fmt.Sprintf("Error: %v", err)),
+			ID:      req.ID,
+		}
+	}
+
+	return &Response{
+		JSONRPC: "2.0",
+		Result:  result,
+		ID:      req.ID,
 	}
 }
 

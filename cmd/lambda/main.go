@@ -263,6 +263,9 @@ func handleAuthEndpoints(path string, queryParams map[string]string, bodyBytes [
 		if redirectURI == "" {
 			return errorResponse(headers, http.StatusBadRequest, "missing redirect_uri"), true, nil
 		}
+		if !isValidRedirectURI(redirectURI) {
+			return errorResponse(headers, http.StatusBadRequest, "invalid redirect_uri"), true, nil
+		}
 
 		// AUTH0_CLIENT_ID が設定されている場合は Auth0 Universal Login 画面へリダイレクト
 		if auth0ClientID != "" {
@@ -420,6 +423,25 @@ func handleMCPRequest(ctx context.Context, path string, headers map[string]strin
 		"Mcp-Protocol-Version": defaultProtocolVersion,
 		"Mcp-Session-Id":       defaultSessionID,
 	})
+}
+
+// isValidRedirectURI は redirect_uri がオープンリダイレクト脆弱性を持たない安全な絶対URLかを検証します
+func isValidRedirectURI(uri string) bool {
+	if uri == "" {
+		return false
+	}
+	u, err := url.Parse(uri)
+	if err != nil || !u.IsAbs() || u.Host == "" {
+		return false
+	}
+	if u.Fragment != "" {
+		return false
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return false
+	}
+	return true
 }
 
 func main() {

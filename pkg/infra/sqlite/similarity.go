@@ -8,9 +8,11 @@ import (
 // normalizeString は類似度比較のために文字列を正規化します（小文字化、スペース・記号の除去）
 func normalizeString(s string) string {
 	var sb strings.Builder
-	for _, r := range strings.ToLower(s) {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			sb.WriteRune(r)
+	sb.Grow(len(s))
+	for _, r := range s {
+		lower := unicode.ToLower(r)
+		if unicode.IsLetter(lower) || unicode.IsDigit(lower) {
+			sb.WriteRune(lower)
 		}
 	}
 	return sb.String()
